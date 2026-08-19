@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Intentionally empty beyond the reference: the application services that will live here
+       (template registration, activation, the numbering service) haven't been built yet.
+       See /areas/dms.md for the build order. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Dms.Domain\Dms.Domain.csproj" />
+  </ItemGroup>
+</Project>
