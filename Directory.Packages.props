@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <!-- NOTE: versions below are the expected .NET 8 servicing line as of this writing. They
+       were NOT restored/verified in the authoring environment (no NuGet access). Run
+       dotnet restore, then dotnet list package --outdated, and bump/pin from there —
+       same caveat ERES's own Directory.Packages.props carries. -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="8.0.10" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.10" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
+  </ItemGroup>
+</Project>
