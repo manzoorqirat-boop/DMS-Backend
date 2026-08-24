@@ -73,3 +73,8 @@ public sealed record DepartmentSummary(
         department.IsActive,
         department.CreatedAt);
 }
+
+public sealed record IntegrityCheckResult(
+    string DocumentNumber,
+    bool IsValid,
+    IReadOnlyList<string> Findings);
