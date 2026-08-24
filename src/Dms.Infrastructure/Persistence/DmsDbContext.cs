@@ -11,6 +11,10 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
 
     public DbSet<DocumentType> DocumentTypes => Set<DocumentType>();
     public DbSet<DocumentTemplate> DocumentTemplates => Set<DocumentTemplate>();
+    public DbSet<Site> Sites => Set<Site>();
+    public DbSet<Department> Departments => Set<Department>();
+    public DbSet<ControlledDocument> ControlledDocuments => Set<ControlledDocument>();
+    public DbSet<DocumentNumberSequence> DocumentNumberSequences => Set<DocumentNumberSequence>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -19,6 +23,7 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
         // document_templates table directly must see 'Active', not '3', and a future enum
         // reorder must not be a silent data-corruption event.
         builder.Properties<TemplateStatus>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<DocumentStatus>().HaveConversion<string>().HaveMaxLength(32);
 
         base.ConfigureConventions(builder);
     }
