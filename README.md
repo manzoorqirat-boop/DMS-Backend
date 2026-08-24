@@ -2,8 +2,8 @@
 
 GxP/pharma controlled-document management system. Handles the document lifecycle —
 initiation, review, approval, issuance, distribution, retrieval, revision, obsolescence —
-and delegates e-signature and signing audit trail to **ERES/Hastakshar** over HTTP as a
-separate service.
+with its own inbuilt electronic-signature module. **DMS does not call ERES/Hastakshar** —
+review, approval and the signing audit trail are implemented here.
 
 ## Layout
 
@@ -11,7 +11,7 @@ Clean Architecture, mirroring `eres-backend`'s conventions.
 
 | Project | Depends on | Notes |
 |---|---|---|
-| `Dms.Domain` | — | Entities, enums, pure domain services. **No package references, by design.** |
+| `Dms.Domain` | — | Entities, enums, pure domain services incl. PBKDF2 password hashing. **No package references, by design.** |
 | `Dms.Application` | Domain | Use-case services, DTOs, and the abstractions Infrastructure implements. **No package references either** — persistence and storage sit behind interfaces so this layer never sees EF Core. |
 | `Dms.Infrastructure` | Application | EF Core / Npgsql, repositories, blob store, DI wiring. |
 | `Dms.Api` | Infrastructure | Minimal-API endpoints, HTTP error mapping, current-user resolution. |
@@ -29,8 +29,38 @@ local `ModelBuilder` convention rather than a package, central package managemen
 | 2 | Numbering service + draft creation | **Done** |
 | 3 | OnlyOffice/Collabora integration + check-in/out | Not started |
 | 4 | Audit wiring + server-side protected-field revalidation | **Done** |
-| 5 | Handoff to Review/Approval → ERES | Not started (mapping designed) |
+| 5 | Review & approval — **inbuilt**, no ERES | **Done** |
 | 6 | Template governance | Not decided |
+
+## Phase 5 — review & approval (inbuilt)
+
+A draft is submitted with a **sequential signature route** — the whole route is fixed up
+front, because letting a reviewer choose their own approver at signing time would let the two
+be the same conversation. Only the lowest-numbered pending step is signable. Submitting locks
+the draft, which is what makes the content hash recorded against each signature meaningful.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET`/`POST` | `/api/users` | User master data |
+| `POST` | `/api/users/me/change-password` | Self-service only |
+| `POST` | `/api/documents/{id}/submit` | Start the route |
+| `GET` | `/api/documents/{id}/route` | Route with applied signatures |
+| `POST` | `/api/documents/{id}/sign` | Apply a signature |
+| `POST` | `/api/documents/{id}/make-effective` | Issue with an effective date |
+| `GET` | `/api/my/pending-signatures` | The caller's signing queue |
+
+### How Part 11 is discharged
+
+| Requirement | Where |
+|---|---|
+| §11.50(a) — printed name, timestamp, meaning shown with the signature | Copied onto `ElectronicSignature` at signing, never resolved live, so a role change doesn't rewrite old approvals |
+| §11.70 — signature linked to its record | `ContentHash`: SHA-256 of the exact bytes in front of the signer |
+| §11.200(a)(1) — signing credential distinct from session | Password re-entered on every `/sign`; being logged in is not sufficient |
+| §11.200(a)(2) — signature used only by its owner | No administrator password reset exists |
+| §11.300(d) — unauthorised attempts detected | `SignatureAuthenticationFailed` audited; account locks after 3 failures |
+
+Signatures are append-only through the same three layers as the audit trail: no mutators, the
+`SaveChanges` guard, and database triggers.
 
 ## Phase 4 — what it does
 
@@ -83,6 +113,64 @@ returning a failed `Result`, because a normal return would commit.
 | `GET` | `/api/documents/{id}` | One document |
 | `POST` | `/api/documents/{id}/withdraw` | Abandon a draft; number stays burned, not reused |
 | `GET` | `/api/documents/{id}/working-copy` | Download for inspection — **not** the authoring path |
+
+## Configuration & access control
+
+Two things that started as code constants are now master data.
+
+**Numbering patterns.** `DocumentNumberPattern` renders a configurable token string —
+`{SITE}-{DEPT}-{TYPE}-{SEQ:0000}` or `SOP/{DEPT}/{YYYY}/{SEQ:000}`. Tokens: `SITE`, `DEPT`,
+`TYPE`, `SEQ`, `REV`, `YYYY`, `YY`, `MM`. A `NumberingRule` sets the pattern per document
+type, optionally overridden per site; resolution is most-specific-wins with a built-in
+default so the system works before anything is configured.
+
+Patterns are validated **when the rule is saved**, not when a document is created — a bad
+pattern should be a form error for an administrator, not an outage for an author.
+`POST /api/numbering-rules/preview` shows the rendered result first.
+
+A pattern containing a year or month token implies the sequence restarts each period, so
+`DocumentNumberSequence` is keyed by `PeriodKey` as well as site/department/type. Changing a
+pattern never renumbers documents already issued.
+
+**Role & privilege matrix.** `Permission` is a fixed enum — every value corresponds to a check
+in code, so a permission that exists but nothing enforces would be a matrix that lies.
+`Role` bundles permissions and is composed by administrators at runtime.
+`UserRoleAssignment` grants a role at Global, Site or Department scope, which is what makes
+"QA Head at Site A" different from "QA Head at Site B".
+
+`RoleManage` is deliberately **not** scopable: a site-scoped role administrator could grant
+themselves `RoleManage` and escalate to anything, so scoping it would be scoping that does
+nothing.
+
+**Review routes.** `WorkflowDefinition` declares the review chain per document type, with an
+optional per-site override — "QA reviews, then HOD reviews, then Plant Head approves". Steps
+name **roles**, not people.
+
+At submission the submitter no longer supplies a route. They call
+`GET /api/documents/{id}/route-template`, which returns the fixed chain plus, for each step,
+the people who actually hold that role at *this document's* site and department. They nominate
+one candidate per step; `ReviewWorkflowService` validates every nomination against that
+eligible list, so a submitter can't add a step, drop one, reorder the chain, or name a
+friendly approver who was never meant to be in it.
+
+Definitions are immutable while active — steps can only be edited after deactivating, so the
+route can't change between a submitter loading the form and posting it. A partial unique index
+enforces at most one active definition per (type, site). Documents already in review keep the
+route they were submitted under, because the chain is materialised into `SignatureRequest`
+rows at submission.
+
+### What is deliberately NOT configurable
+
+In a regulated system, configuration that changes computational behaviour is itself subject to
+validation. These stay in code on purpose — an admin-editable version of any of them would
+mean a validated *engine* running an unvalidated config:
+
+- Append-only audit and signature tables
+- Sequential signing, and that only the named signer may sign a step
+- Hash-to-record binding of signatures
+- Which document status transitions are legal
+- That a number is issued once, gap-free, and never reissued
+- That a route must contain at least one approver, and that one person cannot occupy two steps
 
 ## Phase 1 — what it does
 
@@ -148,10 +236,10 @@ dotnet run --project src/Dms.Api
   before it's anything other than a dev store.
 - **No tests.** `DocxTemplateValidator` is pure and I/O-free specifically so it can be
   covered against a folder of good and bad sample `.docx` files without a database.
-- **Only Draft-stage transitions exist** on `ControlledDocument`. Review and approval are
-  ERES's to drive (Phase 5), so the states between `InReview` and `Approved` are declared in
-  the enum but have no transition methods — writing speculative ones would mean rewriting
-  them once real envelope callbacks exist.
+- **Revision cycle is not built.** `Supersede()` and `MakeObsolete()` exist on
+  `ControlledDocument`, but nothing yet creates revision *n+1* from an effective document,
+  carries its number forward, or supersedes the predecessor when the successor takes effect.
+  That's the next lifecycle gap, and it's the one an inspector reaches fastest.
 - **Four-digit sequence ceiling** — 9,999 documents per site/department/type before numbers
   grow a fifth digit and stop sorting lexically. Pinned in `DocumentNumberFormat` rather than
   left configurable, since changing it mid-life would make old and new numbers inconsistent.
