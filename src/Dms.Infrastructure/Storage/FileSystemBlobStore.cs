@@ -21,12 +21,27 @@ public static class TemplateStorageConfig
     public const string DefaultRootPath = "storage/templates";
 }
 
+/// <summary>Configuration keys for the disk-backed working-copy store.</summary>
+public static class DocumentStorageConfig
+{
+    public const string SectionName = "DocumentStorage";
+
+    public const string RootPathKey = $"{SectionName}:RootPath";
+
+    public const string DefaultRootPath = "storage/documents";
+}
+
 /// <summary>
-/// Disk-backed implementation of <see cref="ITemplateFileStore"/>. Straightforward on
-/// purpose: it exists so Phase 1 is runnable end to end without standing up object storage,
-/// and so the seam for S3/MinIO is already in the right place when that decision is made.
+/// Disk-backed blob storage. Straightforward on purpose: it exists so the build is runnable
+/// end to end without standing up object storage, and so the seam for S3/MinIO is already in
+/// the right place when that decision is made.
+/// <para>
+/// Templates and controlled documents get separate roots and separate interfaces, but share
+/// this implementation — the containment and atomic-write logic below is exactly the kind of
+/// thing that should not exist in two copies that can drift apart.
+/// </para>
 /// </summary>
-public sealed class FileSystemTemplateFileStore : ITemplateFileStore
+public abstract class FileSystemBlobStore
 {
     private readonly string _root;
 
@@ -35,7 +50,7 @@ public sealed class FileSystemTemplateFileStore : ITemplateFileStore
     /// assembly needs no options/binder package beyond what EF Core already brings —
     /// consistent with keeping each regulated repo's dependency surface minimal.
     /// </summary>
-    public FileSystemTemplateFileStore(string rootPath)
+    protected FileSystemBlobStore(string rootPath)
     {
         _root = Path.GetFullPath(rootPath);
         Directory.CreateDirectory(_root);
@@ -100,3 +115,15 @@ public sealed class FileSystemTemplateFileStore : ITemplateFileStore
         return candidate;
     }
 }
+
+/// <summary>Template files. Root configured by <c>TemplateStorage:RootPath</c>.</summary>
+public sealed class FileSystemTemplateFileStore(string rootPath)
+    : FileSystemBlobStore(rootPath), ITemplateFileStore;
+
+/// <summary>
+/// Working copies of controlled documents. Root configured by <c>DocumentStorage:RootPath</c>,
+/// separate from templates: different retention and different access rules, and a shared
+/// bucket would be a harder split later than two from the start.
+/// </summary>
+public sealed class FileSystemDocumentFileStore(string rootPath)
+    : FileSystemBlobStore(rootPath), IDocumentFileStore;
