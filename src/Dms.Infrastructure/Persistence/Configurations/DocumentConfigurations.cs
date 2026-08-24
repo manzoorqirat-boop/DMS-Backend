@@ -16,8 +16,11 @@ public class DocumentTypeConfiguration : IEntityTypeConfiguration<DocumentType>
         builder.Property(x => x.Code).HasMaxLength(16).IsRequired();
         builder.Property(x => x.Name).HasMaxLength(200).IsRequired();
 
-        builder.HasIndex(x => x.Code).IsUnique();
-        builder.HasIndex(x => x.IsActive);
+        // Named explicitly rather than left to EF's IX_ convention: the application service
+        // identifies which constraint a failed insert violated by name, so these names are
+        // part of the contract between layers and shouldn't drift with a property rename.
+        builder.HasIndex(x => x.Code).IsUnique().HasDatabaseName("ux_document_types_code");
+        builder.HasIndex(x => x.IsActive).HasDatabaseName("ix_document_types_is_active");
     }
 }
 
@@ -53,8 +56,23 @@ public class DocumentTemplateConfiguration : IEntityTypeConfiguration<DocumentTe
         // The application service assigns TemplateVersion sequentially per DocumentType, but
         // this constraint is what actually stops two concurrent uploads racing to the same
         // number.
-        builder.HasIndex(x => new { x.DocumentTypeId, x.TemplateVersion }).IsUnique();
+        builder.HasIndex(x => new { x.DocumentTypeId, x.TemplateVersion })
+            .IsUnique()
+            .HasDatabaseName("ux_document_templates_type_version");
 
-        builder.HasIndex(x => new { x.DocumentTypeId, x.Status });
+        // Partial unique index — the real enforcement of "at most one Active template per
+        // DocumentType". The activation service retires the incumbent before promoting the
+        // successor, but read-then-write is not atomic across two concurrent admins; this
+        // index is what makes the loser fail loudly instead of leaving the type with two live
+        // templates. Filter is raw SQL, so it names the snake_case column and the enum's
+        // persisted name-string, matching the HaveConversion<string>() convention in
+        // DmsDbContext.ConfigureConventions.
+        builder.HasIndex(x => x.DocumentTypeId)
+            .IsUnique()
+            .HasFilter("status = 'Active'")
+            .HasDatabaseName("ux_document_templates_one_active_per_type");
+
+        builder.HasIndex(x => new { x.DocumentTypeId, x.Status })
+            .HasDatabaseName("ix_document_templates_type_status");
     }
 }
