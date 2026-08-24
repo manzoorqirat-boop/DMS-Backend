@@ -25,6 +25,7 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     public DbSet<NumberingRule> NumberingRules => Set<NumberingRule>();
     public DbSet<WorkflowDefinition> WorkflowDefinitions => Set<WorkflowDefinition>();
     public DbSet<WorkflowStepDefinition> WorkflowStepDefinitions => Set<WorkflowStepDefinition>();
+    public DbSet<MetadataFieldDefinition> MetadataFieldDefinitions => Set<MetadataFieldDefinition>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -36,6 +37,7 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
         builder.Properties<DocumentStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<AuditAction>().HaveConversion<string>().HaveMaxLength(64);
         builder.Properties<Permission>().HaveConversion<string>().HaveMaxLength(64);
+        builder.Properties<MetadataSource>().HaveConversion<string>().HaveMaxLength(64);
         builder.Properties<SignatureRole>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureRequestStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureMeaning>().HaveConversion<string>().HaveMaxLength(32);
