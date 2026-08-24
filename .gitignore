@@ -1,0 +1,27 @@
+## .NET build output
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Local template blob store — never versioned. Registered templates are data, and in a
+## deployed environment this path points at a mounted volume or object store, not the repo.
+storage/
+
+## Local secrets. Connection strings and any future JWT/service credentials belong in
+## environment variables or the platform's secret store, never in a committed appsettings file.
+appsettings.Local.json
+*.env
+.env
+
+## Tooling
+.vs/
+.vscode/
+.idea/
+*.swp
+.DS_Store
