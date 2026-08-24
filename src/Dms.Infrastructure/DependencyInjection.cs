@@ -1,6 +1,9 @@
 using Dms.Application.Abstractions;
 using Dms.Application.DocumentTypes;
 using Dms.Application.Documents;
+using Dms.Application.Access;
+using Dms.Application.Numbering;
+using Dms.Application.Signing;
 using Dms.Application.Templates;
 using Dms.Infrastructure.Persistence;
 using Dms.Infrastructure.Persistence.Repositories;
@@ -49,6 +52,20 @@ public static class DependencyInjection
         services.AddScoped<IDepartmentRepository, DepartmentRepository>();
         services.AddScoped<IControlledDocumentRepository, ControlledDocumentRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+        services.AddScoped<IUserRepository, UserRepository>();
+        services.AddScoped<ISignatureRepository, SignatureRepository>();
+        services.AddScoped<IRoleRepository, RoleRepository>();
+        services.AddScoped<INumberingRuleRepository, NumberingRuleRepository>();
+        services.AddScoped<IAccessControl, AccessControl>();
+
+        var maxAttempts = int.TryParse(configuration[$"{SigningPolicy.SectionName}:MaxFailedAttempts"], out var parsed)
+            ? parsed
+            : SigningPolicy.DefaultMaxFailedAttempts;
+        var lockout = TimeSpan.TryParse(configuration[$"{SigningPolicy.SectionName}:LockoutDuration"], out var parsedSpan)
+            ? parsedSpan
+            : SigningPolicy.DefaultLockoutDuration;
+
+        services.AddSingleton<ISigningPolicy>(new SigningPolicy(maxAttempts, lockout));
 
         // One instance serving both interfaces: recording and querying share the same
         // DbContext, and registering them separately would put audit writes in a different
@@ -73,6 +90,10 @@ public static class DependencyInjection
         services.AddScoped<DocumentTypeService>();
         services.AddScoped<OrganisationService>();
         services.AddScoped<DraftCreationService>();
+        services.AddScoped<ReviewWorkflowService>();
+        services.AddScoped<UserService>();
+        services.AddScoped<RoleService>();
+        services.AddScoped<NumberingRuleService>();
 
         return services;
     }
