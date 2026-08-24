@@ -26,3 +26,37 @@ public enum TemplateStatus
     /// <summary>Superseded by a newer Active version. Documents already created from it keep referencing it by version.</summary>
     Retired,
 }
+
+/// <summary>
+/// Lifecycle of a <see cref="Dms.Domain.Entities.ControlledDocument"/>, as described by the URS:
+/// initiation, review, approval, issuance, distribution, retrieval, revision, obsolescence.
+/// <para>
+/// The full set is declared now because the states are URS-driven and known, but only the
+/// Draft-stage transitions are implemented — review and approval are ERES's to drive
+/// (Phase 5), and writing speculative transition methods for them would mean rewriting them
+/// once the real envelope callbacks exist.
+/// </para>
+/// </summary>
+public enum DocumentStatus
+{
+    /// <summary>Created from a template, being authored. The only editable state.</summary>
+    Draft,
+
+    /// <summary>Handed to ERES as an envelope; awaiting reviewer sign-off.</summary>
+    InReview,
+
+    /// <summary>All approvers signed. Not yet in force.</summary>
+    Approved,
+
+    /// <summary>In force from its effective date. The version a controlled copy prints from.</summary>
+    Effective,
+
+    /// <summary>Replaced by a later revision that is now Effective.</summary>
+    Superseded,
+
+    /// <summary>Withdrawn from use with no replacement. Retained for the retention period.</summary>
+    Obsolete,
+
+    /// <summary>Abandoned before ever being issued. The number stays burned rather than reused.</summary>
+    Withdrawn,
+}
