@@ -134,6 +134,10 @@ public enum AuditAction
     // belongs in the trail alongside the documents it will shape.
     NumberingRuleCreated,
     NumberingRuleChanged,
+    WorkflowDefinitionCreated,
+    WorkflowStepsChanged,
+    WorkflowActivated,
+    WorkflowDeactivated,
 }
 
 /// <summary>Why a person is on a signature route.</summary>
