@@ -44,5 +44,7 @@ app.MapDocumentTypeEndpoints();
 app.MapTemplateEndpoints();
 app.MapOrganisationEndpoints();
 app.MapDocumentEndpoints();
+app.MapIntegrityEndpoints();
+app.MapAuditEndpoints();
 
 app.Run();
