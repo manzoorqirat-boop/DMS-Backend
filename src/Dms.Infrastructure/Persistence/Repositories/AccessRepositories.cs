@@ -205,3 +205,40 @@ public sealed class NumberingRuleRepository(DmsDbContext db) : INumberingRuleRep
     public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
         SaveChangesTranslator.SaveAsync(db, cancellationToken);
 }
+
+public sealed class WorkflowDefinitionRepository(DmsDbContext db) : IWorkflowDefinitionRepository
+{
+    public async Task<IReadOnlyList<WorkflowDefinition>> FindActiveCandidatesAsync(
+        Guid documentTypeId,
+        Guid siteId,
+        CancellationToken cancellationToken) =>
+        await db.WorkflowDefinitions
+            .Include(d => d.Steps)
+            .AsNoTracking()
+            .Where(d => d.IsActive
+                && d.DocumentTypeId == documentTypeId
+                && (d.SiteId == null || d.SiteId == siteId))
+            .ToListAsync(cancellationToken);
+
+    public Task<WorkflowDefinition?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+        db.WorkflowDefinitions.Include(d => d.Steps).FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<WorkflowDefinition>> ListAsync(
+        Guid? documentTypeId,
+        CancellationToken cancellationToken)
+    {
+        var query = db.WorkflowDefinitions.Include(d => d.Steps).AsQueryable();
+
+        if (documentTypeId is { } type)
+        {
+            query = query.Where(x => x.DocumentTypeId == type);
+        }
+
+        return await query.OrderBy(x => x.DocumentTypeId).ThenBy(x => x.Name).ToListAsync(cancellationToken);
+    }
+
+    public void Add(WorkflowDefinition definition) => db.WorkflowDefinitions.Add(definition);
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
