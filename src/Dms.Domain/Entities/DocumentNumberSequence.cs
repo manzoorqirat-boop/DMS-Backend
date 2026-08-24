@@ -18,17 +18,29 @@ public class DocumentNumberSequence : Entity
 {
     private DocumentNumberSequence() { }
 
-    public DocumentNumberSequence(Guid siteId, Guid departmentId, Guid documentTypeId)
+    public DocumentNumberSequence(Guid siteId, Guid departmentId, Guid documentTypeId, string periodKey)
     {
         SiteId = siteId;
         DepartmentId = departmentId;
         DocumentTypeId = documentTypeId;
+        PeriodKey = periodKey;
         LastSequence = 0;
     }
 
     public Guid SiteId { get; private set; }
     public Guid DepartmentId { get; private set; }
     public Guid DocumentTypeId { get; private set; }
+
+    /// <summary>
+    /// The period this counter covers — "2026", "2026-03", or empty for one continuous run.
+    /// <para>
+    /// Derived from the numbering pattern: a pattern containing a year token implies the
+    /// sequence restarts each year, which is the point of putting the year in the number.
+    /// Empty string rather than null so it can sit in a unique index without the NULL-isn't-
+    /// equal-to-NULL behaviour silently letting duplicate counter rows exist.
+    /// </para>
+    /// </summary>
+    public string PeriodKey { get; private set; } = "";
 
     /// <summary>Highest sequence number issued so far for this combination. 0 means none yet.</summary>
     public int LastSequence { get; private set; }
