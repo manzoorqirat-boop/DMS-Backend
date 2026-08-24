@@ -138,6 +138,9 @@ public enum AuditAction
     WorkflowStepsChanged,
     WorkflowActivated,
     WorkflowDeactivated,
+    MetadataFieldAdded,
+    MetadataFieldChanged,
+    MetadataFieldRemoved,
 }
 
 /// <summary>Why a person is on a signature route.</summary>
@@ -239,4 +242,46 @@ public enum AssignmentScope
 
     /// <summary>One department at one site.</summary>
     Department,
+}
+
+/// <summary>
+/// Which piece of DMS data fills a metadata content control.
+/// <para>
+/// A closed enum rather than, say, a property-path string, for the same reason
+/// <see cref="Permission"/> is: every value corresponds to real code that produces the value.
+/// A configurable expression language here would be a small unvalidated programming language
+/// sitting inside a regulated system — the thing to avoid, not the thing to build.
+/// </para>
+/// </summary>
+public enum MetadataSource
+{
+    /// <summary>The issued document number, rendered from the numbering pattern.</summary>
+    DocumentNumber,
+
+    DocumentTitle,
+
+    /// <summary>Revision label, e.g. "00".</summary>
+    Revision,
+
+    /// <summary>Blank until the document is issued. Deliberately not guessed at on a draft.</summary>
+    EffectiveDate,
+
+    DepartmentName,
+    DepartmentCode,
+    SiteName,
+    SiteCode,
+    DocumentTypeName,
+    DocumentTypeCode,
+
+    /// <summary>Username of the author who created the document.</summary>
+    Author,
+
+    /// <summary>Author's full name as held on their user record at creation time.</summary>
+    AuthorFullName,
+
+    /// <summary>Date the draft was created, ISO format.</summary>
+    CreatedDate,
+
+    /// <summary>Current document status, e.g. "Draft".</summary>
+    Status,
 }
