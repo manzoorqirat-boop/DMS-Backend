@@ -42,5 +42,7 @@ app.MapGet("/health/ready", async (DmsDbContext db, CancellationToken ct) =>
 
 app.MapDocumentTypeEndpoints();
 app.MapTemplateEndpoints();
+app.MapOrganisationEndpoints();
+app.MapDocumentEndpoints();
 
 app.Run();
