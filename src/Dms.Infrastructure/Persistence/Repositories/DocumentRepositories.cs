@@ -113,12 +113,14 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
         Guid siteId,
         Guid departmentId,
         Guid documentTypeId,
+        string periodKey,
         CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT INTO dms.document_number_sequences (id, site_id, department_id, document_type_id, last_sequence)
-            VALUES (@id, @site_id, @department_id, @document_type_id, 1)
-            ON CONFLICT (site_id, department_id, document_type_id)
+            INSERT INTO dms.document_number_sequences
+                (id, site_id, department_id, document_type_id, period_key, last_sequence)
+            VALUES (@id, @site_id, @department_id, @document_type_id, @period_key, 1)
+            ON CONFLICT (site_id, department_id, document_type_id, period_key)
             DO UPDATE SET last_sequence = dms.document_number_sequences.last_sequence + 1
             RETURNING last_sequence;
             """;
@@ -141,6 +143,7 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
         command.Parameters.Add(new NpgsqlParameter("site_id", siteId));
         command.Parameters.Add(new NpgsqlParameter("department_id", departmentId));
         command.Parameters.Add(new NpgsqlParameter("document_type_id", documentTypeId));
+        command.Parameters.Add(new NpgsqlParameter("period_key", periodKey));
 
         var result = await command.ExecuteScalarAsync(cancellationToken);
 
