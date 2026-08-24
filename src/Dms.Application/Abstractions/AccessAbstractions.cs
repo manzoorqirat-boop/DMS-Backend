@@ -82,3 +82,23 @@ public interface INumberingRuleRepository
 
     Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
 }
+
+public interface IWorkflowDefinitionRepository
+{
+    /// <summary>
+    /// Active definitions that could apply to a type at a site. The caller picks the most
+    /// specific — resolution order is a domain decision, not a query detail.
+    /// </summary>
+    Task<IReadOnlyList<WorkflowDefinition>> FindActiveCandidatesAsync(
+        Guid documentTypeId,
+        Guid siteId,
+        CancellationToken cancellationToken);
+
+    Task<WorkflowDefinition?> GetAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<WorkflowDefinition>> ListAsync(Guid? documentTypeId, CancellationToken cancellationToken);
+
+    void Add(WorkflowDefinition definition);
+
+    Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
+}
