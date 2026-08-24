@@ -31,7 +31,7 @@ public static class DocxMetadataWriter
     /// <paramref name="values"/> set to its value.
     /// </summary>
     /// <param name="docxBytes">The template file. Not modified.</param>
-    /// <param name="values">Tag name (see <c>TemplateFieldTags</c>) to display value.</param>
+    /// <param name="values">Tag name to display value, as produced by <c>MetadataResolver</c>.</param>
     public static DocxMetadataWriteResult Write(byte[] docxBytes, IReadOnlyDictionary<string, string> values)
     {
         using var source = new MemoryStream(docxBytes);
