@@ -242,3 +242,24 @@ public sealed class WorkflowDefinitionRepository(DmsDbContext db) : IWorkflowDef
     public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
         SaveChangesTranslator.SaveAsync(db, cancellationToken);
 }
+
+public sealed class MetadataFieldRepository(DmsDbContext db) : IMetadataFieldRepository
+{
+    public async Task<IReadOnlyList<MetadataFieldDefinition>> ListForTypeAsync(
+        Guid documentTypeId,
+        CancellationToken cancellationToken) =>
+        await db.MetadataFieldDefinitions
+            .Where(x => x.DocumentTypeId == documentTypeId)
+            .OrderBy(x => x.DisplayOrder)
+            .ToListAsync(cancellationToken);
+
+    public Task<MetadataFieldDefinition?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+        db.MetadataFieldDefinitions.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public void Add(MetadataFieldDefinition field) => db.MetadataFieldDefinitions.Add(field);
+
+    public void Remove(MetadataFieldDefinition field) => db.MetadataFieldDefinitions.Remove(field);
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
