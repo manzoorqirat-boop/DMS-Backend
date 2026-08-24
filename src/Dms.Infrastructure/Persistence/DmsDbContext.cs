@@ -15,6 +15,7 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<ControlledDocument> ControlledDocuments => Set<ControlledDocument>();
     public DbSet<DocumentNumberSequence> DocumentNumberSequences => Set<DocumentNumberSequence>();
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -24,8 +25,53 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
         // reorder must not be a silent data-corruption event.
         builder.Properties<TemplateStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<DocumentStatus>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<AuditAction>().HaveConversion<string>().HaveMaxLength(64);
 
         base.ConfigureConventions(builder);
+    }
+
+    /// <summary>
+    /// Rejects any attempt to modify or delete an <see cref="AuditEvent"/>.
+    /// <para>
+    /// The second of three layers protecting the trail. The entity itself exposes no mutators,
+    /// but reflection, a future <c>ExecuteUpdate</c>, or simply someone adding a setter would
+    /// all get past that; this catches them at the point of writing. The third layer — a
+    /// database trigger blocking UPDATE and DELETE on the table — is the one that also stops a
+    /// direct psql session, and is applied by migration (see <c>Migrations/AuditImmutability.sql</c>).
+    /// </para>
+    /// <para>
+    /// Throwing rather than silently discarding the change is deliberate: a caller that tried
+    /// to rewrite an audit record has a bug or worse, and the request should fail loudly.
+    /// </para>
+    /// </summary>
+    private void GuardAuditImmutability()
+    {
+        var violations = ChangeTracker.Entries<AuditEvent>()
+            .Where(entry => entry.State is EntityState.Modified or EntityState.Deleted)
+            .ToList();
+
+        if (violations.Count == 0)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Audit events are append-only; {violations.Count} entr(y/ies) were marked "
+            + $"{string.Join(", ", violations.Select(v => v.State).Distinct())}.");
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        GuardAuditImmutability();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        GuardAuditImmutability();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
