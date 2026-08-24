@@ -45,6 +45,10 @@ app.MapTemplateEndpoints();
 app.MapOrganisationEndpoints();
 app.MapDocumentEndpoints();
 app.MapIntegrityEndpoints();
+app.MapUserEndpoints();
+app.MapRoleEndpoints();
+app.MapNumberingEndpoints();
+app.MapReviewEndpoints();
 app.MapAuditEndpoints();
 
 app.Run();
