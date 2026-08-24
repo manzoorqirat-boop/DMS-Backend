@@ -28,7 +28,19 @@ public static class DocxTemplateValidator
 {
     private const string WordNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
-    public static TemplateValidationResult Validate(byte[] docxBytes)
+    /// <summary>
+    /// Validates against the fixed default tag set. Retained for callers that have no document
+    /// type in hand — anything type-aware should use the overload taking explicit tags, since
+    /// which fields a type requires is configuration now, not a constant.
+    /// </summary>
+    public static TemplateValidationResult Validate(byte[] docxBytes) =>
+        Validate(docxBytes, TemplateFieldTags.Required);
+
+    /// <param name="requiredTags">
+    /// Content-control tags the template must declare, from the document type's configured
+    /// metadata field definitions.
+    /// </param>
+    public static TemplateValidationResult Validate(byte[] docxBytes, IReadOnlyList<string> requiredTags)
     {
         XDocument documentXml;
         XDocument? settingsXml;
@@ -51,7 +63,7 @@ public static class DocxTemplateValidator
         var issues = new List<string>();
 
         var foundTags = FindContentControlTags(documentXml);
-        var missingTags = TemplateFieldTags.Required.Where(tag => !foundTags.Contains(tag)).ToList();
+        var missingTags = requiredTags.Where(tag => !foundTags.Contains(tag)).ToList();
         if (missingTags.Count > 0)
         {
             issues.Add(
