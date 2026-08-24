@@ -102,3 +102,22 @@ public interface IWorkflowDefinitionRepository
 
     Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
 }
+
+public interface IMetadataFieldRepository
+{
+    /// <summary>
+    /// A document type's configured fields, in display order. Returns empty when the type has
+    /// none configured — the caller decides whether to fall back to the built-in default set.
+    /// </summary>
+    Task<IReadOnlyList<MetadataFieldDefinition>> ListForTypeAsync(
+        Guid documentTypeId,
+        CancellationToken cancellationToken);
+
+    Task<MetadataFieldDefinition?> GetAsync(Guid id, CancellationToken cancellationToken);
+
+    void Add(MetadataFieldDefinition field);
+
+    void Remove(MetadataFieldDefinition field);
+
+    Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
+}
