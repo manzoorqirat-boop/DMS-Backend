@@ -4,6 +4,7 @@ using Dms.Application.Documents;
 using Dms.Application.Access;
 using Dms.Application.Numbering;
 using Dms.Application.Signing;
+using Dms.Application.Workflows;
 using Dms.Application.Templates;
 using Dms.Infrastructure.Persistence;
 using Dms.Infrastructure.Persistence.Repositories;
@@ -57,6 +58,7 @@ public static class DependencyInjection
         services.AddScoped<IRoleRepository, RoleRepository>();
         services.AddScoped<INumberingRuleRepository, NumberingRuleRepository>();
         services.AddScoped<IAccessControl, AccessControl>();
+        services.AddScoped<IWorkflowDefinitionRepository, WorkflowDefinitionRepository>();
 
         var maxAttempts = int.TryParse(configuration[$"{SigningPolicy.SectionName}:MaxFailedAttempts"], out var parsed)
             ? parsed
@@ -94,6 +96,7 @@ public static class DependencyInjection
         services.AddScoped<UserService>();
         services.AddScoped<RoleService>();
         services.AddScoped<NumberingRuleService>();
+        services.AddScoped<WorkflowDefinitionService>();
 
         return services;
     }
