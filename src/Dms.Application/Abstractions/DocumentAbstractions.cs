@@ -75,10 +75,16 @@ public interface IControlledDocumentRepository
     /// burned.
     /// </para>
     /// </summary>
+    /// <param name="periodKey">
+    /// Period the counter is scoped to — "2026" when the numbering pattern contains a year
+    /// token, empty for a continuous run. Derived from the pattern, so changing the pattern
+    /// changes the reset behaviour without any code change.
+    /// </param>
     Task<int> AllocateNextSequenceAsync(
         Guid siteId,
         Guid departmentId,
         Guid documentTypeId,
+        string periodKey,
         CancellationToken cancellationToken);
 }
 
