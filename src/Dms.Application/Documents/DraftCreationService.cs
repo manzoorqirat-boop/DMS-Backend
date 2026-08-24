@@ -1,0 +1,293 @@
+using System.Globalization;
+using Dms.Application.Abstractions;
+using Dms.Application.Common;
+using Dms.Domain.Constants;
+using Dms.Domain.Entities;
+using Dms.Domain.Services;
+
+namespace Dms.Application.Documents;
+
+/// <summary>
+/// Phase 2: creates a controlled document in Draft from the Active template for its type.
+/// <para>
+/// The sequence of events matters and is the reason this is one service rather than several:
+/// a number is allocated, the Active template is fetched and its content controls filled with
+/// that number and the rest of the system metadata, the resulting working copy is stored, and
+/// only then does the register row get written. The number allocation and the register insert
+/// share a transaction so that a failure anywhere after allocation returns the number rather
+/// than leaving a hole in the register.
+/// </para>
+/// </summary>
+public sealed class DraftCreationService(
+    IControlledDocumentRepository documents,
+    ISiteRepository sites,
+    IDepartmentRepository departments,
+    IDocumentTypeRepository documentTypes,
+    ITemplateRepository templates,
+    ITemplateFileStore templateFiles,
+    IDocumentFileStore documentFiles,
+    IUnitOfWork unitOfWork,
+    ICurrentUser currentUser)
+{
+    public async Task<Result<DocumentSummary>> CreateDraftAsync(
+        CreateDraftRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserName is not { } author || string.IsNullOrWhiteSpace(author))
+        {
+            return Error.Validation(
+                "actor_unknown",
+                "The acting user could not be determined. Document creation must be attributable.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Title))
+        {
+            return Error.Validation("document_title_required", "A document title is required.");
+        }
+
+        var context = await ResolveContextAsync(request, cancellationToken);
+        if (!context.IsSuccess)
+        {
+            return context.Error!;
+        }
+
+        var (site, department, documentType, template) = context.Value;
+
+        var templateBytes = await templateFiles.ReadAsync(template.StorageKey, cancellationToken);
+        if (templateBytes is null)
+        {
+            return Error.NotFound(
+                "template_file_missing",
+                $"The stored file for the active template of '{documentType.Code}' is missing.");
+        }
+
+        var workingCopyKey = $"documents/{Guid.CreateVersion7():N}.docx";
+
+        try
+        {
+            return await unitOfWork.ExecuteInTransactionAsync(async ct =>
+            {
+                var sequence = await documents.AllocateNextSequenceAsync(
+                    site.Id, department.Id, documentType.Id, ct);
+
+                var documentNumber = DocumentNumberFormat.Compose(
+                    site.Code, department.Code, documentType.Code, sequence);
+
+                var document = new ControlledDocument(
+                    documentNumber,
+                    request.Title,
+                    site.Id,
+                    department.Id,
+                    documentType.Id,
+                    template.Id,
+                    workingCopyKey,
+                    author);
+
+                var merge = DocxMetadataWriter.Write(
+                    templateBytes,
+                    BuildMetadata(document, department, author));
+
+                if (merge.MissingTags.Count > 0)
+                {
+                    // The template passed validation when it was registered, so its stored
+                    // bytes and its validation record have since diverged. Failing here beats
+                    // issuing a controlled document with blank metadata on its face.
+                    throw new DraftAbortedException(Error.Conflict(
+                        "template_fields_missing",
+                        $"The active template is missing content control(s): {string.Join(", ", merge.MissingTags)}. "
+                        + "Re-register and re-validate the template."));
+                }
+
+                await documentFiles.SaveAsync(workingCopyKey, merge.Content, ct);
+
+                documents.Add(document);
+                var outcome = await documents.SaveChangesAsync(ct);
+
+                if (!outcome.Saved)
+                {
+                    throw new DraftAbortedException(
+                        outcome.ViolatedIndexContains("title")
+                            ? Error.Conflict(
+                                "document_title_taken",
+                                $"A document titled '{request.Title}' already exists for type '{documentType.Code}'.")
+                            : Error.Conflict(
+                                "document_save_conflict",
+                                "The document could not be created because of a conflicting concurrent change."));
+                }
+
+                return DocumentSummary.From(document);
+            }, cancellationToken);
+        }
+        catch (DraftAbortedException ex)
+        {
+            // Transaction rolled back, so the sequence number was returned rather than burned.
+            // The blob store isn't transactional, so clean up the orphaned working copy.
+            await documentFiles.DeleteAsync(workingCopyKey, CancellationToken.None);
+            return ex.Error;
+        }
+        catch
+        {
+            await documentFiles.DeleteAsync(workingCopyKey, CancellationToken.None);
+            throw;
+        }
+    }
+
+    public async Task<Result<DocumentSummary>> GetAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await documents.GetAsync(id, cancellationToken);
+        return document is null
+            ? Error.NotFound("document_not_found", $"No document with id {id}.")
+            : DocumentSummary.From(document);
+    }
+
+    public async Task<IReadOnlyList<DocumentSummary>> ListAsync(
+        Guid? siteId,
+        Guid? departmentId,
+        Guid? documentTypeId,
+        CancellationToken cancellationToken)
+    {
+        var found = await documents.ListAsync(siteId, departmentId, documentTypeId, cancellationToken);
+        return found.Select(DocumentSummary.From).ToList();
+    }
+
+    public async Task<Result<DocumentSummary>> WithdrawAsync(Guid id, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(currentUser.UserName))
+        {
+            return Error.Validation(
+                "actor_unknown",
+                "The acting user could not be determined. Withdrawal must be attributable.");
+        }
+
+        var document = await documents.GetAsync(id, cancellationToken);
+        if (document is null)
+        {
+            return Error.NotFound("document_not_found", $"No document with id {id}.");
+        }
+
+        try
+        {
+            document.Withdraw();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Error.Conflict("document_not_withdrawable", ex.Message);
+        }
+
+        var outcome = await documents.SaveChangesAsync(cancellationToken);
+        return outcome.Saved
+            ? DocumentSummary.From(document)
+            : Error.Conflict(
+                "document_save_conflict",
+                "The document could not be withdrawn because of a conflicting concurrent change.");
+    }
+
+    /// <summary>
+    /// The working copy as stored. Until the document server lands in Phase 3 this is how a
+    /// draft is inspected; it is not the author's editing path, and won't become one — URS
+    /// Functions #13 forbids the real file reaching a client PC.
+    /// </summary>
+    public async Task<Result<(byte[] Content, string FileName)>> DownloadWorkingCopyAsync(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var document = await documents.GetAsync(id, cancellationToken);
+        if (document is null)
+        {
+            return Error.NotFound("document_not_found", $"No document with id {id}.");
+        }
+
+        var content = await documentFiles.ReadAsync(document.WorkingCopyKey, cancellationToken);
+        if (content is null)
+        {
+            return Error.NotFound(
+                "document_file_missing",
+                $"The working copy for {document.DocumentNumber} is missing.");
+        }
+
+        return Result<(byte[] Content, string FileName)>.Success(
+            (content, $"{document.DocumentNumber}.docx"));
+    }
+
+    /// <summary>
+    /// Loads and checks everything the draft depends on before any of it is written to. Each
+    /// failure names the specific thing that's wrong rather than a generic "invalid request" —
+    /// "department is deactivated" and "no active template for this type" send an admin to
+    /// completely different places.
+    /// </summary>
+    private async Task<Result<(Site Site, Department Department, DocumentType Type, DocumentTemplate Template)>>
+        ResolveContextAsync(CreateDraftRequest request, CancellationToken cancellationToken)
+    {
+        var site = await sites.GetAsync(request.SiteId, cancellationToken);
+        if (site is null)
+        {
+            return Error.NotFound("site_not_found", $"No site with id {request.SiteId}.");
+        }
+
+        if (!site.IsActive)
+        {
+            return Error.Validation("site_inactive", $"Site '{site.Code}' is deactivated.");
+        }
+
+        var department = await departments.GetAsync(request.DepartmentId, cancellationToken);
+        if (department is null)
+        {
+            return Error.NotFound("department_not_found", $"No department with id {request.DepartmentId}.");
+        }
+
+        if (department.SiteId != site.Id)
+        {
+            return Error.Validation(
+                "department_site_mismatch",
+                $"Department '{department.Code}' does not belong to site '{site.Code}'.");
+        }
+
+        if (!department.IsActive)
+        {
+            return Error.Validation("department_inactive", $"Department '{department.Code}' is deactivated.");
+        }
+
+        var documentType = await documentTypes.GetAsync(request.DocumentTypeId, cancellationToken);
+        if (documentType is null)
+        {
+            return Error.NotFound("document_type_not_found", $"No document type with id {request.DocumentTypeId}.");
+        }
+
+        if (!documentType.IsActive)
+        {
+            return Error.Validation("document_type_inactive", $"Document type '{documentType.Code}' is deactivated.");
+        }
+
+        var template = await templates.GetActiveAsync(documentType.Id, cancellationToken);
+        if (template is null)
+        {
+            return Error.Conflict(
+                "no_active_template",
+                $"Document type '{documentType.Code}' has no active template. Register and activate one first.");
+        }
+
+        return Result<(Site Site, Department Department, DocumentType Type, DocumentTemplate Template)>.Success(
+            (site, department, documentType, template));
+    }
+
+    /// <summary>
+    /// The seven system-populated fields, keyed by the tag names the template declares. Dates
+    /// are written in ISO form: a controlled document read across sites shouldn't depend on the
+    /// reader's locale to disambiguate 03/04 — and EffectiveDate is deliberately blank on a
+    /// draft rather than guessed at, since nothing is effective until it's approved.
+    /// </summary>
+    private static Dictionary<string, string> BuildMetadata(
+        ControlledDocument document,
+        Department department,
+        string author) =>
+        new(StringComparer.Ordinal)
+        {
+            [TemplateFieldTags.DocumentNumber] = document.DocumentNumber,
+            [TemplateFieldTags.Title] = document.Title,
+            [TemplateFieldTags.Revision] = DocumentNumberFormat.ComposeRevision(document.Revision),
+            [TemplateFieldTags.EffectiveDate] = "",
+            [TemplateFieldTags.Department] = department.Name,
+            [TemplateFieldTags.Author] = author,
+            [TemplateFieldTags.CreatedDate] = document.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+        };
+}
