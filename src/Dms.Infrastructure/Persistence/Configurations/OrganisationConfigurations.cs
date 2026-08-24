@@ -55,7 +55,13 @@ public class DocumentNumberSequenceConfiguration : IEntityTypeConfiguration<Docu
         // ON CONFLICT clause in ControlledDocumentRepository.AllocateNextSequenceAsync.
         // Postgres requires a matching unique index for that clause to be legal at all, so
         // removing or renaming this breaks numbering outright rather than degrading it.
-        builder.HasIndex(x => new { x.SiteId, x.DepartmentId, x.DocumentTypeId })
+        builder.Property(x => x.PeriodKey).HasMaxLength(16).IsRequired();
+
+        // PeriodKey is part of the key, not an attribute: a pattern containing {YYYY} gets one
+        // counter per year, and those counters are genuinely different sequences. It is also
+        // part of the ON CONFLICT target in AllocateNextSequenceAsync, so this index must match
+        // that clause exactly or numbering stops working outright.
+        builder.HasIndex(x => new { x.SiteId, x.DepartmentId, x.DocumentTypeId, x.PeriodKey })
             .IsUnique()
             .HasDatabaseName("ux_document_number_sequences_scope");
     }
