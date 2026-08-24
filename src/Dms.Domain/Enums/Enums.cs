@@ -60,3 +60,42 @@ public enum DocumentStatus
     /// <summary>Abandoned before ever being issued. The number stays burned rather than reused.</summary>
     Withdrawn,
 }
+
+/// <summary>
+/// What happened, for an <see cref="Dms.Domain.Entities.AuditEvent"/>.
+/// <para>
+/// An enum rather than a free string so the set is closed and greppable: an auditor asking
+/// "show me every activation" must not depend on whoever wrote the call site having spelled
+/// it the same way as everyone else.
+/// </para>
+/// </summary>
+public enum AuditAction
+{
+    // Master data
+    DocumentTypeCreated,
+    DocumentTypeDeactivated,
+    DocumentTypeReactivated,
+    SiteCreated,
+    DepartmentCreated,
+
+    // Templates
+    TemplateRegistered,
+    TemplateValidationPassed,
+    TemplateValidationFailed,
+    TemplateActivated,
+    TemplateRetired,
+
+    // Controlled documents
+    DocumentCreated,
+    DocumentRetitled,
+    DocumentWithdrawn,
+
+    /// <summary>
+    /// A saved working copy failed protected-field revalidation — its metadata or its
+    /// document protection had been altered. Recorded as an event in its own right because
+    /// an attempt to defeat the lock is exactly the kind of thing the trail exists to show.
+    /// </summary>
+    DocumentIntegrityCheckFailed,
+
+    DocumentIntegrityCheckPassed,
+}
