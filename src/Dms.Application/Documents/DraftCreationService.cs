@@ -1,5 +1,6 @@
 using System.Globalization;
 using Dms.Application.Abstractions;
+using Dms.Application.Metadata;
 using Dms.Application.Numbering;
 using Dms.Application.Common;
 using Dms.Domain.Constants;
@@ -30,6 +31,7 @@ public sealed class DraftCreationService(
     IDocumentFileStore documentFiles,
     IUnitOfWork unitOfWork,
     NumberingRuleService numbering,
+    MetadataFieldService metadataFields,
     IAccessControl access,
     IAuditTrail audit,
     ICurrentUser currentUser)
@@ -85,6 +87,7 @@ public sealed class DraftCreationService(
 
         // Pattern resolution reads master data, so it happens before the transaction opens —
         // there's no reason to hold the sequence row lock while looking up configuration.
+        var fieldDefinitions = await metadataFields.ResolveForTypeAsync(documentType.Id, cancellationToken);
         var pattern = await numbering.ResolvePatternAsync(documentType.Id, site.Id, cancellationToken);
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var periodKey = DocumentNumberPattern.PeriodKeyFor(pattern, today);
@@ -114,7 +117,9 @@ public sealed class DraftCreationService(
 
                 var merge = DocxMetadataWriter.Write(
                     templateBytes,
-                    BuildMetadata(document, department, author));
+                    MetadataResolver.Resolve(
+                        fieldDefinitions,
+                        BuildContext(document, site, department, documentType, author)));
 
                 if (merge.MissingTags.Count > 0)
                 {
@@ -280,6 +285,15 @@ public sealed class DraftCreationService(
             return Error.NotFound("department_not_found", "The document's department no longer exists.");
         }
 
+        var site = await sites.GetAsync(document.SiteId, cancellationToken);
+        var documentType = await documentTypes.GetAsync(document.DocumentTypeId, cancellationToken);
+        if (site is null || documentType is null)
+        {
+            return Error.NotFound(
+                "document_context_missing",
+                "The document's site or type no longer exists, so its metadata can't be recomputed.");
+        }
+
         var content = await documentFiles.ReadAsync(document.WorkingCopyKey, cancellationToken);
         if (content is null)
         {
@@ -288,8 +302,16 @@ public sealed class DraftCreationService(
                 $"The working copy for {document.DocumentNumber} is missing.");
         }
 
+        // Same definitions and same resolver the writer used. Building the expected map any
+        // other way here would make a formatting difference look like tampering.
+        var fieldDefinitions = await metadataFields.ResolveForTypeAsync(
+            document.DocumentTypeId, cancellationToken);
+
         var verification = DocxProtectionVerifier.Verify(
-            content, BuildMetadata(document, department, document.Author));
+            content,
+            MetadataResolver.Resolve(
+                fieldDefinitions,
+                BuildContext(document, site, department, documentType, document.Author)));
 
         audit.Record(
             verification.IsValid
@@ -379,18 +401,30 @@ public sealed class DraftCreationService(
     /// reader's locale to disambiguate 03/04 — and EffectiveDate is deliberately blank on a
     /// draft rather than guessed at, since nothing is effective until it's approved.
     /// </summary>
-    private static Dictionary<string, string> BuildMetadata(
+    /// <summary>
+    /// Flattens the document and its master data into the shape <see cref="MetadataResolver"/>
+    /// consumes. Author full name falls back to the username when the user record can't be
+    /// read — a blank name on a controlled document is worse than a less friendly one.
+    /// </summary>
+    private static MetadataContext BuildContext(
         ControlledDocument document,
+        Site site,
         Department department,
+        DocumentType documentType,
         string author) =>
-        new(StringComparer.Ordinal)
-        {
-            [TemplateFieldTags.DocumentNumber] = document.DocumentNumber,
-            [TemplateFieldTags.Title] = document.Title,
-            [TemplateFieldTags.Revision] = DocumentNumberFormat.ComposeRevision(document.Revision),
-            [TemplateFieldTags.EffectiveDate] = "",
-            [TemplateFieldTags.Department] = department.Name,
-            [TemplateFieldTags.Author] = author,
-            [TemplateFieldTags.CreatedDate] = document.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-        };
+        new(
+            document.DocumentNumber,
+            document.Title,
+            document.Revision,
+            document.EffectiveDate,
+            site.Code,
+            site.Name,
+            department.Code,
+            department.Name,
+            documentType.Code,
+            documentType.Name,
+            author,
+            author,
+            document.CreatedAt,
+            document.Status);
 }
