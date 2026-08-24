@@ -49,6 +49,7 @@ app.MapUserEndpoints();
 app.MapRoleEndpoints();
 app.MapNumberingEndpoints();
 app.MapWorkflowEndpoints();
+app.MapMetadataEndpoints();
 app.MapReviewEndpoints();
 app.MapAuditEndpoints();
 
