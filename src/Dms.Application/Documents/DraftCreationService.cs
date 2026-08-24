@@ -1,8 +1,10 @@
 using System.Globalization;
 using Dms.Application.Abstractions;
+using Dms.Application.Numbering;
 using Dms.Application.Common;
 using Dms.Domain.Constants;
 using Dms.Domain.Entities;
+using Dms.Domain.Enums;
 using Dms.Domain.Services;
 
 namespace Dms.Application.Documents;
@@ -27,8 +29,13 @@ public sealed class DraftCreationService(
     ITemplateFileStore templateFiles,
     IDocumentFileStore documentFiles,
     IUnitOfWork unitOfWork,
+    NumberingRuleService numbering,
+    IAccessControl access,
+    IAuditTrail audit,
     ICurrentUser currentUser)
 {
+    private const string EntityType = "ControlledDocument";
+
     public async Task<Result<DocumentSummary>> CreateDraftAsync(
         CreateDraftRequest request,
         CancellationToken cancellationToken)
@@ -43,6 +50,19 @@ public sealed class DraftCreationService(
         if (string.IsNullOrWhiteSpace(request.Title))
         {
             return Error.Validation("document_title_required", "A document title is required.");
+        }
+
+        // Checked against the document's own site and department rather than globally: an
+        // author authorised in QA at one plant has no business creating documents in
+        // Production at another.
+        var permitted = await access.HasPermissionAsync(
+            Permission.DocumentCreate, request.SiteId, request.DepartmentId, cancellationToken);
+
+        if (!permitted)
+        {
+            return Error.Validation(
+                "permission_denied",
+                $"{Permission.DocumentCreate} is required for this site and department.");
         }
 
         var context = await ResolveContextAsync(request, cancellationToken);
@@ -63,15 +83,24 @@ public sealed class DraftCreationService(
 
         var workingCopyKey = $"documents/{Guid.CreateVersion7():N}.docx";
 
+        // Pattern resolution reads master data, so it happens before the transaction opens —
+        // there's no reason to hold the sequence row lock while looking up configuration.
+        var pattern = await numbering.ResolvePatternAsync(documentType.Id, site.Id, cancellationToken);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var periodKey = DocumentNumberPattern.PeriodKeyFor(pattern, today);
+
         try
         {
             return await unitOfWork.ExecuteInTransactionAsync(async ct =>
             {
                 var sequence = await documents.AllocateNextSequenceAsync(
-                    site.Id, department.Id, documentType.Id, ct);
+                    site.Id, department.Id, documentType.Id, periodKey, ct);
 
-                var documentNumber = DocumentNumberFormat.Compose(
-                    site.Code, department.Code, documentType.Code, sequence);
+                var documentNumber = DocumentNumberPattern.Render(
+                    pattern,
+                    new NumberTokens(
+                        site.Code, department.Code, documentType.Code,
+                        sequence, Revision: 0, today));
 
                 var document = new ControlledDocument(
                     documentNumber,
@@ -101,6 +130,11 @@ public sealed class DraftCreationService(
                 await documentFiles.SaveAsync(workingCopyKey, merge.Content, ct);
 
                 documents.Add(document);
+                audit.Record(
+                    AuditAction.DocumentCreated, EntityType, document.Id, document.DocumentNumber,
+                    $"Title '{document.Title}'; type {documentType.Code}; "
+                    + $"template {template.Name} v{template.TemplateVersion}.");
+
                 var outcome = await documents.SaveChangesAsync(ct);
 
                 if (!outcome.Saved)
@@ -174,6 +208,10 @@ public sealed class DraftCreationService(
             return Error.Conflict("document_not_withdrawable", ex.Message);
         }
 
+        audit.Record(
+            AuditAction.DocumentWithdrawn, EntityType, document.Id, document.DocumentNumber,
+            "Draft abandoned; number remains issued and is not reused.");
+
         var outcome = await documents.SaveChangesAsync(cancellationToken);
         return outcome.Saved
             ? DocumentSummary.From(document)
@@ -207,6 +245,71 @@ public sealed class DraftCreationService(
 
         return Result<(byte[] Content, string FileName)>.Success(
             (content, $"{document.DocumentNumber}.docx"));
+    }
+
+    /// <summary>
+    /// Re-checks a stored working copy against the metadata the server wrote into it, and
+    /// against its own document protection.
+    /// <para>
+    /// Once Phase 3 lands, the document server's save callback calls this before accepting a
+    /// save, and a failure rejects the write. Exposed as an explicit operation now so the
+    /// check is testable, and so an administrator can re-verify a document already at rest —
+    /// worth having permanently, not just as a stand-in.
+    /// </para>
+    /// </summary>
+    public async Task<Result<IntegrityCheckResult>> VerifyWorkingCopyAsync(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(currentUser.UserName))
+        {
+            return Error.Validation(
+                "actor_unknown",
+                "The acting user could not be determined. Integrity checks must be attributable.");
+        }
+
+        var document = await documents.GetAsync(id, cancellationToken);
+        if (document is null)
+        {
+            return Error.NotFound("document_not_found", $"No document with id {id}.");
+        }
+
+        var department = await departments.GetAsync(document.DepartmentId, cancellationToken);
+        if (department is null)
+        {
+            return Error.NotFound("department_not_found", "The document's department no longer exists.");
+        }
+
+        var content = await documentFiles.ReadAsync(document.WorkingCopyKey, cancellationToken);
+        if (content is null)
+        {
+            return Error.NotFound(
+                "document_file_missing",
+                $"The working copy for {document.DocumentNumber} is missing.");
+        }
+
+        var verification = DocxProtectionVerifier.Verify(
+            content, BuildMetadata(document, department, document.Author));
+
+        audit.Record(
+            verification.IsValid
+                ? AuditAction.DocumentIntegrityCheckPassed
+                : AuditAction.DocumentIntegrityCheckFailed,
+            EntityType, document.Id, document.DocumentNumber,
+            verification.IsValid ? null : string.Join(" | ", verification.Findings));
+
+        // Recorded whether it passed or failed. A trail that only shows failures can't
+        // demonstrate that checking happens at all, which is half of what an inspector is
+        // asking when they ask whether it happens.
+        var outcome = await documents.SaveChangesAsync(cancellationToken);
+        if (!outcome.Saved)
+        {
+            return Error.Conflict(
+                "audit_save_conflict",
+                "The integrity check completed but its audit record could not be written.");
+        }
+
+        return new IntegrityCheckResult(document.DocumentNumber, verification.IsValid, verification.Findings);
     }
 
     /// <summary>
