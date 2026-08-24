@@ -7,11 +7,16 @@ namespace Dms.Domain.Constants;
 /// must not be author-editable, which starts with the template declaring exactly where that
 /// metadata goes.
 /// <para>
-/// Deliberately one fixed set for every <see cref="Dms.Domain.Entities.DocumentType"/> rather than a
-/// per-type configurable list — Doc No / Title / Revision / Effective Date / Department /
-/// Author / Created Date are the fields the numbering and workflow services fill in
-/// regardless of whether the document is an SOP or a Protocol. A type-specific extension
-/// point can be added later if a real template needs one; nothing here forecloses it.
+/// These are now the <b>default</b> set, not the only set. A document type with configured
+/// <see cref="Dms.Domain.Entities.MetadataFieldDefinition"/> rows uses those instead, with
+/// whatever tag names its own templates already carry. This list is what a type falls back to
+/// when nothing has been configured — a sensible starting point rather than a placeholder,
+/// since these seven are the fields the URS names.
+/// </para>
+/// <para>
+/// Referenced directly only by <c>MetadataFieldService</c>, which owns the fallback. Nothing
+/// else should reach for it: consumers ask that service what a type's fields are, so
+/// configured and actual can't drift apart.
 /// </para>
 /// </summary>
 public static class TemplateFieldTags
@@ -24,7 +29,7 @@ public static class TemplateFieldTags
     public const string Author = "Author";
     public const string CreatedDate = "CreatedDate";
 
-    /// <summary>Every tag a template must declare to pass structural validation.</summary>
+    /// <summary>The default tag set, used when a document type has no fields configured.</summary>
     public static readonly IReadOnlyList<string> Required =
     [
         DocumentNumber, Title, Revision, EffectiveDate, Department, Author, CreatedDate,
