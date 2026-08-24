@@ -1,5 +1,6 @@
 using Dms.Application.Abstractions;
 using Dms.Application.DocumentTypes;
+using Dms.Application.Documents;
 using Dms.Application.Templates;
 using Dms.Infrastructure.Persistence;
 using Dms.Infrastructure.Persistence.Repositories;
@@ -44,11 +45,18 @@ public static class DependencyInjection
 
         services.AddScoped<IDocumentTypeRepository, DocumentTypeRepository>();
         services.AddScoped<ITemplateRepository, TemplateRepository>();
+        services.AddScoped<ISiteRepository, SiteRepository>();
+        services.AddScoped<IDepartmentRepository, DepartmentRepository>();
+        services.AddScoped<IControlledDocumentRepository, ControlledDocumentRepository>();
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
 
         var templateRoot = configuration[TemplateStorageConfig.RootPathKey]
             ?? TemplateStorageConfig.DefaultRootPath;
+        var documentRoot = configuration[DocumentStorageConfig.RootPathKey]
+            ?? DocumentStorageConfig.DefaultRootPath;
 
         services.AddSingleton<ITemplateFileStore>(_ => new FileSystemTemplateFileStore(templateRoot));
+        services.AddSingleton<IDocumentFileStore>(_ => new FileSystemDocumentFileStore(documentRoot));
 
         // Application services are registered from here rather than from an AddApplication()
         // in Dms.Application itself: that project references Domain and nothing else — no
@@ -56,6 +64,8 @@ public static class DependencyInjection
         // lines of registration wasn't worth breaking that.
         services.AddScoped<TemplateRegistrationService>();
         services.AddScoped<DocumentTypeService>();
+        services.AddScoped<OrganisationService>();
+        services.AddScoped<DraftCreationService>();
 
         return services;
     }
