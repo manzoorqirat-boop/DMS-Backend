@@ -98,4 +98,141 @@ public enum AuditAction
     DocumentIntegrityCheckFailed,
 
     DocumentIntegrityCheckPassed,
+
+    // Review and approval — driven by ERES envelope outcomes, not by DMS deciding.
+    DocumentSubmittedForReview,
+    DocumentReturnedForRework,
+    DocumentApproved,
+    DocumentMadeEffective,
+    DocumentSuperseded,
+    DocumentObsoleted,
+    ReviewRouteStarted,
+    ReviewRouteCancelled,
+    SignatureApplied,
+    SignatureRejected,
+
+    /// <summary>
+    /// A signing attempt failed password re-authentication. Recorded because repeated failures
+    /// against a signature step are exactly what §11.300(d) expects to be detected and
+    /// reported, and an unrecorded failed attempt tells nobody anything.
+    /// </summary>
+    SignatureAuthenticationFailed,
+
+    UserCreated,
+    UserDeactivated,
+    UserPasswordChanged,
+
+    // Access control. Privilege changes are themselves auditable events — "who could do what,
+    // and when did that change" is one of the first questions in any access review.
+    RoleCreated,
+    RolePermissionsChanged,
+    RoleDeactivated,
+    RoleAssigned,
+    RoleRevoked,
+
+    // Configuration. A numbering pattern change alters every number issued afterwards, so it
+    // belongs in the trail alongside the documents it will shape.
+    NumberingRuleCreated,
+    NumberingRuleChanged,
+}
+
+/// <summary>Why a person is on a signature route.</summary>
+public enum SignatureRole
+{
+    Reviewer,
+    Approver,
+}
+
+/// <summary>
+/// State of one step on a route. Steps run in order: only the lowest-numbered Pending step is
+/// signable at any moment, which is what makes the route sequential rather than a free-for-all.
+/// </summary>
+public enum SignatureRequestStatus
+{
+    Pending,
+    Signed,
+    Rejected,
+
+    /// <summary>The route was abandoned — rejected earlier, or the document withdrawn — before this step was reached.</summary>
+    Cancelled,
+}
+
+/// <summary>
+/// The meaning of a signature, as 21 CFR Part 11 §11.50(a)(3) requires be displayed with it.
+/// A signature that doesn't say what it meant is not a compliant signature.
+/// </summary>
+public enum SignatureMeaning
+{
+    Reviewed,
+    Approved,
+    Rejected,
+}
+
+/// <summary>
+/// A single privilege that can be granted to a role. The rows of the privilege matrix.
+/// <para>
+/// An enum rather than free-form strings held in master data, deliberately. Roles and their
+/// grants are configuration — an administrator composes them without a deployment. The set of
+/// <i>things that can be granted</i> is not: every value here corresponds to a specific check
+/// in code, so a permission that exists but nothing enforces would be a privilege matrix that
+/// lies to the person reading it. Adding a permission means adding its enforcement.
+/// </para>
+/// </summary>
+public enum Permission
+{
+    // Master data
+    SiteManage,
+    DepartmentManage,
+    DocumentTypeManage,
+
+    // Access control — separated from other master data because the power to grant
+    // yourself a permission is categorically different from the power to add a department.
+    RoleManage,
+    UserManage,
+
+    // Configuration
+    NumberingConfigure,
+    WorkflowConfigure,
+
+    // Templates
+    TemplateView,
+    TemplateRegister,
+    TemplateActivate,
+    TemplateRetire,
+
+    // Controlled documents
+    DocumentView,
+    DocumentCreate,
+    DocumentEdit,
+    DocumentWithdraw,
+    DocumentSubmit,
+
+    /// <summary>
+    /// Permission to appear on a signature route at all. Not permission to sign a specific
+    /// step — that is always and only the person named on it, checked separately.
+    /// </summary>
+    DocumentSign,
+
+    DocumentIssue,
+    DocumentObsolete,
+
+    /// <summary>Read the audit trail. There is deliberately no permission to write or amend it.</summary>
+    AuditView,
+}
+
+/// <summary>
+/// How far a role assignment reaches. Narrower is more specific and is what makes "QA Head at
+/// Site A" different from "QA Head at Site B" — a distinction a global-only model can't express
+/// and which matters the moment a company has two plants.
+/// </summary>
+public enum AssignmentScope
+{
+    /// <summary>Everywhere. Reserved for genuinely organisation-wide roles.</summary>
+    Global,
+
+    /// <summary>All departments at one site.</summary>
+    Site,
+
+    /// <summary>One department at one site.</summary>
+    Department,
 }
