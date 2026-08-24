@@ -50,6 +50,13 @@ public static class DependencyInjection
         services.AddScoped<IControlledDocumentRepository, ControlledDocumentRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
 
+        // One instance serving both interfaces: recording and querying share the same
+        // DbContext, and registering them separately would put audit writes in a different
+        // change tracker from the change they describe.
+        services.AddScoped<AuditTrail>();
+        services.AddScoped<IAuditTrail>(sp => sp.GetRequiredService<AuditTrail>());
+        services.AddScoped<IAuditQuery>(sp => sp.GetRequiredService<AuditTrail>());
+
         var templateRoot = configuration[TemplateStorageConfig.RootPathKey]
             ?? TemplateStorageConfig.DefaultRootPath;
         var documentRoot = configuration[DocumentStorageConfig.RootPathKey]
