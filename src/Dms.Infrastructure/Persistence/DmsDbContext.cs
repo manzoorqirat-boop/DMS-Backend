@@ -16,6 +16,13 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     public DbSet<ControlledDocument> ControlledDocuments => Set<ControlledDocument>();
     public DbSet<DocumentNumberSequence> DocumentNumberSequences => Set<DocumentNumberSequence>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<DmsUser> Users => Set<DmsUser>();
+    public DbSet<SignatureRequest> SignatureRequests => Set<SignatureRequest>();
+    public DbSet<ElectronicSignature> ElectronicSignatures => Set<ElectronicSignature>();
+    public DbSet<Role> Roles => Set<Role>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+    public DbSet<UserRoleAssignment> UserRoleAssignments => Set<UserRoleAssignment>();
+    public DbSet<NumberingRule> NumberingRules => Set<NumberingRule>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -26,6 +33,10 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
         builder.Properties<TemplateStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<DocumentStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<AuditAction>().HaveConversion<string>().HaveMaxLength(64);
+        builder.Properties<Permission>().HaveConversion<string>().HaveMaxLength(64);
+        builder.Properties<SignatureRole>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<SignatureRequestStatus>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<SignatureMeaning>().HaveConversion<string>().HaveMaxLength(32);
 
         base.ConfigureConventions(builder);
     }
@@ -44,9 +55,19 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     /// to rewrite an audit record has a bug or worse, and the request should fail loudly.
     /// </para>
     /// </summary>
-    private void GuardAuditImmutability()
+    private void GuardAppendOnlyEntities()
     {
-        var violations = ChangeTracker.Entries<AuditEvent>()
+        GuardAppendOnly<AuditEvent>("Audit events");
+
+        // Applied signatures are append-only for the same reason and with more at stake: an
+        // amendable signature is not a signature. A decision that turns out to be wrong is
+        // corrected by a new signature on a new revision, never by editing the old one.
+        GuardAppendOnly<ElectronicSignature>("Electronic signatures");
+    }
+
+    private void GuardAppendOnly<T>(string description) where T : class
+    {
+        var violations = ChangeTracker.Entries<T>()
             .Where(entry => entry.State is EntityState.Modified or EntityState.Deleted)
             .ToList();
 
@@ -56,13 +77,13 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
         }
 
         throw new InvalidOperationException(
-            $"Audit events are append-only; {violations.Count} entr(y/ies) were marked "
+            $"{description} are append-only; {violations.Count} entr(y/ies) were marked "
             + $"{string.Join(", ", violations.Select(v => v.State).Distinct())}.");
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
-        GuardAuditImmutability();
+        GuardAppendOnlyEntities();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
@@ -70,7 +91,7 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
         bool acceptAllChangesOnSuccess,
         CancellationToken cancellationToken = default)
     {
-        GuardAuditImmutability();
+        GuardAppendOnlyEntities();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
