@@ -48,6 +48,7 @@ app.MapIntegrityEndpoints();
 app.MapUserEndpoints();
 app.MapRoleEndpoints();
 app.MapNumberingEndpoints();
+app.MapWorkflowEndpoints();
 app.MapReviewEndpoints();
 app.MapAuditEndpoints();
 
