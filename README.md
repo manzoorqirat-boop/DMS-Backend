@@ -159,6 +159,20 @@ enforces at most one active definition per (type, site). Documents already in re
 route they were submitted under, because the chain is materialised into `SignatureRequest`
 rows at submission.
 
+**Metadata fields.** `MetadataFieldDefinition` declares, per document type, which
+`<w:tag>` a template uses and which piece of DMS data fills it. The decoupling is the point:
+a customer whose template already says `SOP_No` doesn't have to rewrite it to match our
+constant — they map that tag to `MetadataSource.DocumentNumber`.
+
+`MetadataResolver` is the single function producing the tag → value map, shared by
+`DocxMetadataWriter` (which stamps it) and `DocxProtectionVerifier` (which later checks it).
+If those two built maps independently, any divergence — a date format, a trimmed string —
+would surface as a spurious integrity failure on an untouched document.
+
+A type with no fields configured falls back to the seven the URS names. Configuring even one
+replaces the default set entirely; a half-merged mix is harder to reason about than either
+alone.
+
 ### What is deliberately NOT configurable
 
 In a regulated system, configuration that changes computational behaviour is itself subject to
@@ -171,6 +185,11 @@ mean a validated *engine* running an unvalidated config:
 - Which document status transitions are legal
 - That a number is issued once, gap-free, and never reissued
 - That a route must contain at least one approver, and that one person cannot occupy two steps
+- That system-populated fields are written server-side into protected regions and revalidated
+  on save — an admin chooses which fields exist, not whether they are protected
+- `MetadataSource` and `Permission` stay code enums: each value maps to real code, and a
+  configurable expression language here would be an unvalidated mini-language inside a
+  regulated system
 
 ## Phase 1 — what it does
 
