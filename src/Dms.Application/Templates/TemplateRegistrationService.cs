@@ -245,12 +245,13 @@ public sealed class TemplateRegistrationService(
             : TemplateSummary.From(template);
     }
 
-    public async Task<IReadOnlyList<TemplateSummary>> ListAsync(
+    public async Task<PagedResult<TemplateSummary>> ListAsync(
         Guid? documentTypeId,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
-        var found = await templates.ListAsync(documentTypeId, cancellationToken);
-        return found.Select(TemplateSummary.From).ToList();
+        var found = await templates.ListAsync(documentTypeId, paging, cancellationToken);
+        return found.Map(TemplateSummary.From);
     }
 
     /// <summary>
