@@ -72,6 +72,7 @@ public static class DependencyInjection
         services.AddScoped<IDistributionRepository, DistributionRepository>();
         services.AddScoped<INotificationRepository, NotificationRepository>();
         services.AddScoped<IJobRunRepository, JobRunRepository>();
+        services.AddScoped<INotificationRuleRepository, NotificationRuleRepository>();
         services.AddSingleton<IClock, SystemClock>();
 
         // Stand-in: logs instead of mailing. Replace before go-live — see LoggingNotificationSender.
@@ -137,6 +138,7 @@ public static class DependencyInjection
         services.AddScoped<DistributionService>();
         services.AddScoped<NotificationService>();
         services.AddScoped<ReminderJob>();
+        services.AddScoped<NotificationRuleService>();
 
         return services;
     }
