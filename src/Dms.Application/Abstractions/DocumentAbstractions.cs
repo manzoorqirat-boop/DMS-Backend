@@ -72,6 +72,16 @@ public interface IControlledDocumentRepository
         Guid familyId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Effective documents whose next review falls on or before <paramref name="dueBy"/>.
+    /// Ordered by due date so the most overdue sits at the top of the report.
+    /// </summary>
+    Task<IReadOnlyList<ControlledDocument>> ListDueForReviewAsync(
+        DateOnly dueBy,
+        Guid? siteId,
+        Guid? departmentId,
+        CancellationToken cancellationToken);
+
     void Add(ControlledDocument document);
 
     Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
@@ -119,4 +129,21 @@ public interface IUnitOfWork
     Task<T> ExecuteInTransactionAsync<T>(
         Func<CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken);
+}
+
+public interface IReviewPolicyRepository
+{
+    /// <summary>Policies that could apply to a type at a site. Caller picks the most specific.</summary>
+    Task<IReadOnlyList<ReviewPolicy>> FindCandidatesAsync(
+        Guid documentTypeId,
+        Guid siteId,
+        CancellationToken cancellationToken);
+
+    Task<ReviewPolicy?> GetAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<ReviewPolicy>> ListAsync(Guid? documentTypeId, CancellationToken cancellationToken);
+
+    void Add(ReviewPolicy policy);
+
+    Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
 }
