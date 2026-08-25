@@ -68,12 +68,58 @@ public class DmsUser : Entity, ITimestamped
     /// </summary>
     public DateTimeOffset? LockedOutUntil { get; private set; }
 
+    /// <summary>
+    /// Failed login attempts, counted separately from signing attempts.
+    /// <para>
+    /// Separate on purpose. Part 11 §11.200 treats the e-signature credential as distinct from
+    /// the general login, and a shared counter would make the audit trail ambiguous about which
+    /// credential was actually being attacked — five failures could mean two login attempts and
+    /// three signing attempts, which are very different events.
+    /// </para>
+    /// </summary>
+    public int FailedLoginAttempts { get; private set; }
+
+    public DateTimeOffset? LoginLockedUntil { get; private set; }
+
+    public DateTimeOffset? LastLoginAt { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset? UpdatedAt { get; private set; }
 
     public bool IsLockedOut(DateTimeOffset now) => LockedOutUntil is { } until && until > now;
 
     public bool CanSign(DateTimeOffset now) => IsActive && !IsLockedOut(now);
+
+    public bool IsLoginLockedOut(DateTimeOffset now) =>
+        LoginLockedUntil is { } until && until > now;
+
+    public bool CanLogIn(DateTimeOffset now) => IsActive && !IsLoginLockedOut(now);
+
+    /// <summary>
+    /// Records a failed login and locks the account once the threshold is reached.
+    /// <para>
+    /// Locking login does not lock signing, and vice versa. Someone brute-forcing a password
+    /// from outside shouldn't be able to stop a signer already at their desk from completing an
+    /// approval — that turns an attempted intrusion into a denial of service against a
+    /// regulated process.
+    /// </para>
+    /// </summary>
+    public void RegisterFailedLogin(int threshold, TimeSpan lockoutDuration, DateTimeOffset now)
+    {
+        FailedLoginAttempts++;
+
+        if (FailedLoginAttempts >= threshold)
+        {
+            LoginLockedUntil = now.Add(lockoutDuration);
+        }
+    }
+
+    public void RegisterSuccessfulLogin(DateTimeOffset now)
+    {
+        FailedLoginAttempts = 0;
+        LoginLockedUntil = null;
+        LastLoginAt = now;
+    }
 
     public bool VerifyPassword(string password) => PasswordHasher.Verify(password, PasswordHash);
 
