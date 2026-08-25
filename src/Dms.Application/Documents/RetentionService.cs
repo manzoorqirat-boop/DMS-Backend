@@ -175,14 +175,15 @@ public sealed class RetentionService(
     /// <summary>
     /// Records eligible for disposition: retention expired, no decision recorded yet.
     /// </summary>
-    public async Task<IReadOnlyList<DispositionDueView>> ListDueForDispositionAsync(
+    public async Task<PagedResult<DispositionDueView>> ListDueForDispositionAsync(
         Guid? siteId,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
-        var due = await documents.ListDueForDispositionAsync(clock.Today, siteId, cancellationToken);
+        var due = await documents.ListDueForDispositionAsync(clock.Today, siteId, paging, cancellationToken);
 
         return due
-            .Select(d => new DispositionDueView(
+            .Map(d => new DispositionDueView(
                 d.Id,
                 d.DocumentNumber,
                 d.Title,
@@ -190,8 +191,7 @@ public sealed class RetentionService(
                 d.Status,
                 d.RetainUntil!.Value,
                 clock.Today.DayNumber - d.RetainUntil!.Value.DayNumber,
-                d.ObsoleteReason))
-            .ToList();
+                d.ObsoleteReason));
     }
 
     public async Task<Result<RetentionPolicyView>> CreatePolicyAsync(
