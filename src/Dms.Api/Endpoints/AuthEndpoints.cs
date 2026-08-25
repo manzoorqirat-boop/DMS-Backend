@@ -1,3 +1,4 @@
+using Dms.Api;
 using Dms.Application.Abstractions;
 using Dms.Application.Auth;
 
@@ -15,7 +16,10 @@ public static class AuthEndpoints
             LoginRequest request,
             CancellationToken ct) =>
             (await service.LoginAsync(request, ct)).ToHttpResult())
-            .AllowAnonymous();
+            .AllowAnonymous()
+            // Per-IP limit, complementing the per-account lockout in AuthService. Lockout stops
+            // many guesses at one account; this stops one password sprayed across many.
+            .RequireRateLimiting(RateLimiting.LoginPolicy);
 
         group.MapGet("/me", (ICurrentUser currentUser) =>
             string.IsNullOrWhiteSpace(currentUser.UserName)
