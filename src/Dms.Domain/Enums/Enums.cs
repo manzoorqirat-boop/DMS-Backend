@@ -157,6 +157,8 @@ public enum AuditAction
     // Scheduled jobs and notifications
     ScheduledJobRan,
     NotificationQueued,
+    NotificationRuleCreated,
+    NotificationRuleChanged,
 
     // Retention and disposition
     RetentionPolicyCreated,
@@ -385,6 +387,33 @@ public enum NotificationKind
 
     /// <summary>Copies are still in circulation for a document no longer current.</summary>
     CopyRetrievalRequired,
+
+    /// <summary>A record's retention has expired and awaits a disposition decision.</summary>
+    DispositionDue,
+}
+
+/// <summary>
+/// Who a notification rule sends to. A closed set, because each value corresponds to real
+/// resolution code — an option nothing resolves would produce a rule that silently notifies
+/// nobody, which is the worst possible failure for a reminder system.
+/// </summary>
+public enum NotificationRecipientMode
+{
+    /// <summary>The document's author. Closest attributable person, often not the right one.</summary>
+    DocumentAuthor,
+
+    /// <summary>
+    /// Everyone holding a named role at the document's own site and department. The usual
+    /// choice — "the QA head at the plant that owns this SOP", without needing a separate
+    /// department-owner field to maintain.
+    /// </summary>
+    RoleHolders,
+
+    /// <summary>Whoever issued the controlled copy. Only meaningful for copy-related kinds.</summary>
+    CopyIssuer,
+
+    /// <summary>The person the pending signature step is assigned to.</summary>
+    StepAssignee,
 }
 
 public enum NotificationStatus
