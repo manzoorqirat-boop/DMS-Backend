@@ -1,3 +1,4 @@
+using Dms.Application.Common;
 using Dms.Application.Documents;
 
 namespace Dms.Api.Endpoints;
@@ -36,8 +37,11 @@ public static class LifecycleEndpoints
             int? withinDays,
             Guid? siteId,
             Guid? departmentId,
+            int? page,
+            int? pageSize,
             CancellationToken ct) =>
-            Results.Ok(await service.ListDueForReviewAsync(withinDays ?? 90, siteId, departmentId, ct)));
+            Results.Ok(await service.ListDueForReviewAsync(
+                withinDays ?? 90, siteId, departmentId, new PagedRequest(page, pageSize), ct)));
 
         // Records the decision taken when retention expired, and carries it out. For
         // DestroyContent the stored file is deleted; the register row, its signatures and its
@@ -53,8 +57,10 @@ public static class LifecycleEndpoints
         reports.MapGet("/disposition-due", async (
             RetentionService service,
             Guid? siteId,
+            int? page,
+            int? pageSize,
             CancellationToken ct) =>
-            Results.Ok(await service.ListDueForDispositionAsync(siteId, ct)));
+            Results.Ok(await service.ListDueForDispositionAsync(siteId, new PagedRequest(page, pageSize), ct)));
 
         var retention = app.MapGroup("/api/retention-policies").WithTags("Retention Policies");
 
