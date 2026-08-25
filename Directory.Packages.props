@@ -13,5 +13,8 @@
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
     <!-- IHttpClientFactory, for fetching saved documents back from the document server. -->
     <PackageVersion Include="Microsoft.Extensions.Http" Version="8.0.1" />
+    <!-- Bearer authentication. -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.10" />
+    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.0.2" />
   </ItemGroup>
 </Project>
