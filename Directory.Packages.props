@@ -11,5 +11,7 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.10" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
+    <!-- IHttpClientFactory, for fetching saved documents back from the document server. -->
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="8.0.1" />
   </ItemGroup>
 </Project>
