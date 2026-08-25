@@ -1,20 +1,25 @@
 using System.Globalization;
 using Dms.Application.Abstractions;
-using Dms.Application.Common;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
+using Dms.Domain.Services;
 
 namespace Dms.Application.Notifications;
 
 /// <summary>
-/// The daily reminder sweep: warns before review dates fall due, chases overdue ones, nudges
-/// pending signatures, and flags copies still owed back.
+/// The daily reminder sweep. Entirely driven by <see cref="NotificationRule"/> master data —
+/// which reminders exist, how far ahead they warn, how often they repeat, who receives them
+/// and what they say are all configuration.
 /// <para>
-/// Every notification carries a dedupe key scoped to the day, so running this twice — by the
-/// scheduler and by someone pressing the manual trigger, or by two application instances at
-/// once — queues each reminder once. That matters more than it sounds: a reminder system that
-/// double-sends gets muted by its recipients within a week, and a muted reminder system is the
-/// same as none.
+/// A kind with no enabled rule simply doesn't fire. That is a deliberate default: a system
+/// that invented reminders nobody configured would fill inboxes with items whose owners never
+/// agreed they were owners, and the fastest way to make a reminder system useless is to make
+/// it noisy.
+/// </para>
+/// <para>
+/// Every notification carries a dedupe key scoped to the rule's repeat window, so running this
+/// twice — by the scheduler and by a manual trigger, or by two instances at once — queues each
+/// reminder once.
 /// </para>
 /// </summary>
 public sealed class ReminderJob(
@@ -22,22 +27,16 @@ public sealed class ReminderJob(
     IDistributionRepository distributions,
     ISignatureRepository signatures,
     IUserRepository users,
+    IRoleRepository roles,
+    ISiteRepository sites,
+    IDepartmentRepository departments,
     INotificationRepository notifications,
+    INotificationRuleRepository rules,
     IJobRunRepository jobRuns,
     IAuditTrail audit,
     IClock clock)
 {
     public const string JobName = "daily-reminders";
-
-    /// <summary>
-    /// How far ahead review reminders look when a document's type has no pre-intimation
-    /// configured. Thirty days is enough to draft and route a revision without being so far out
-    /// that the warning is noise.
-    /// </summary>
-    private const int DefaultPreIntimationDays = 30;
-
-    /// <summary>Days a controlled copy may sit unacknowledged before it is chased.</summary>
-    private const int UnacknowledgedAfterDays = 7;
 
     public async Task<JobRunSummary> RunAsync(string trigger, CancellationToken cancellationToken)
     {
@@ -48,14 +47,11 @@ public sealed class ReminderJob(
         // Each section is independently guarded. A failure gathering signature reminders must
         // not cost the review reminders — a partial sweep beats an abandoned one, provided the
         // run record says which part failed.
-        queued += await SafelyAsync(
-            () => QueueReviewRemindersAsync(cancellationToken), "review reminders", errors);
-        queued += await SafelyAsync(
-            () => QueuePendingSignatureRemindersAsync(cancellationToken), "signature reminders", errors);
-        queued += await SafelyAsync(
-            () => QueueUnacknowledgedCopyRemindersAsync(cancellationToken), "copy acknowledgement reminders", errors);
-        queued += await SafelyAsync(
-            () => QueueRetrievalRemindersAsync(cancellationToken), "retrieval reminders", errors);
+        queued += await SafelyAsync(() => ReviewRemindersAsync(cancellationToken), "review", errors);
+        queued += await SafelyAsync(() => SignatureRemindersAsync(cancellationToken), "signatures", errors);
+        queued += await SafelyAsync(() => UnacknowledgedCopyRemindersAsync(cancellationToken), "copy acknowledgement", errors);
+        queued += await SafelyAsync(() => RetrievalRemindersAsync(cancellationToken), "copy retrieval", errors);
+        queued += await SafelyAsync(() => DispositionRemindersAsync(cancellationToken), "disposition", errors);
 
         var status = errors.Count == 0 ? JobRunStatus.Succeeded : JobRunStatus.CompletedWithErrors;
         var detail = errors.Count == 0
@@ -74,181 +70,334 @@ public sealed class ReminderJob(
         return new JobRunSummary(JobName, run.StartedAt, run.CompletedAt, status, queued, detail);
     }
 
-    /// <summary>
-    /// Documents approaching or past their review date. Both are queued from one pass because
-    /// they come from the same query — the kind differs only by whether the date has passed.
-    /// </summary>
-    private async Task<int> QueueReviewRemindersAsync(CancellationToken cancellationToken)
+    private async Task<int> ReviewRemindersAsync(CancellationToken cancellationToken)
     {
-        var today = clock.Today;
-        var horizon = today.AddDays(DefaultPreIntimationDays);
+        var comingDue = await rules.FindEnabledAsync(NotificationKind.ReviewComingDue, cancellationToken);
+        var overdue = await rules.FindEnabledAsync(NotificationKind.ReviewOverdue, cancellationToken);
 
-        var due = await documents.ListDueForReviewAsync(horizon, null, null, cancellationToken);
-        if (due.Count == 0)
+        if (comingDue.Count == 0 && overdue.Count == 0)
         {
             return 0;
         }
 
+        var today = clock.Today;
+
+        // The widest configured lead time decides how far to look. Each document is then
+        // matched against the rule that actually applies to its type.
+        var horizon = today.AddDays(comingDue.Select(r => r.LeadDays).DefaultIfEmpty(0).Max());
+
+        var due = await documents.ListDueForReviewAsync(horizon, null, null, cancellationToken);
         var candidates = new List<PendingNotification>();
 
         foreach (var document in due)
         {
-            // Addressed to the author. A department-owner concept would be better and doesn't
-            // exist yet; the author is the closest attributable person and is at least
-            // guaranteed to be a real user on the record.
-            var recipient = await users.GetByUserNameAsync(document.Author, cancellationToken);
-            if (recipient is null || !recipient.IsActive)
+            var isOverdue = document.NextReviewDate!.Value < today;
+            var applicable = Resolve(isOverdue ? overdue : comingDue, document.DocumentTypeId);
+
+            if (applicable is null)
             {
                 continue;
             }
 
-            var overdue = document.NextReviewDate!.Value < today;
-            var kind = overdue ? NotificationKind.ReviewOverdue : NotificationKind.ReviewComingDue;
-            var days = document.NextReviewDate!.Value.DayNumber - today.DayNumber;
+            var daysUntil = document.NextReviewDate!.Value.DayNumber - today.DayNumber;
 
-            var subject = overdue
-                ? $"Overdue for review: {document.DocumentNumber}"
-                : $"Review due in {days} day(s): {document.DocumentNumber}";
+            // A coming-due rule with a shorter lead time than the widest one shouldn't fire
+            // early just because another type warns sooner.
+            if (!isOverdue && daysUntil > applicable.LeadDays)
+            {
+                continue;
+            }
 
-            var body = overdue
-                ? $"{document.DocumentNumber} Rev {document.Revision:00} — \"{document.Title}\" was due for "
-                  + $"periodic review on {document.NextReviewDate:yyyy-MM-dd}, {-days} day(s) ago. "
-                  + "It remains effective and in use until reviewed or revised."
-                : $"{document.DocumentNumber} Rev {document.Revision:00} — \"{document.Title}\" is due for "
-                  + $"periodic review on {document.NextReviewDate:yyyy-MM-dd}. "
-                  + "Record a review, or start a revision if changes are needed.";
+            var context = await DocumentTokensAsync(document, cancellationToken);
+            context[MessageTemplate.Tokens.DueDate] = document.NextReviewDate!.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            context[MessageTemplate.Tokens.DaysUntilDue] = daysUntil.ToString(CultureInfo.InvariantCulture);
+            context[MessageTemplate.Tokens.DaysOverdue] = Math.Max(0, -daysUntil).ToString(CultureInfo.InvariantCulture);
 
-            candidates.Add(new PendingNotification(
-                recipient, kind, subject, body,
-                // Overdue reminders repeat daily; coming-due ones are keyed to the due date so
-                // they queue once rather than every day of the pre-intimation window.
-                overdue
-                    ? DedupeKey(kind, document.Id, recipient.Id, today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
-                    : DedupeKey(kind, document.Id, recipient.Id, document.NextReviewDate!.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
-                document.Id));
+            candidates.AddRange(await ExpandAsync(applicable, document, document.Id, context, null, cancellationToken));
         }
 
         return await QueueAsync(candidates, cancellationToken);
     }
 
-    private async Task<int> QueuePendingSignatureRemindersAsync(CancellationToken cancellationToken)
+    private async Task<int> SignatureRemindersAsync(CancellationToken cancellationToken)
     {
-        var pending = await signatures.ListPendingForAllAsync(cancellationToken);
-        if (pending.Count == 0)
+        var applicableRules = await rules.FindEnabledAsync(NotificationKind.SignaturePending, cancellationToken);
+        if (applicableRules.Count == 0)
         {
             return 0;
         }
 
-        var today = clock.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var pending = await signatures.ListPendingForAllAsync(cancellationToken);
         var candidates = new List<PendingNotification>();
 
         foreach (var request in pending)
         {
-            var recipient = await users.GetAsync(request.UserId, cancellationToken);
-            if (recipient is null || !recipient.IsActive)
-            {
-                continue;
-            }
-
             var document = await documents.GetAsync(request.DocumentId, cancellationToken);
             if (document is null)
             {
                 continue;
             }
 
-            candidates.Add(new PendingNotification(
-                recipient,
-                NotificationKind.SignaturePending,
-                $"Signature required: {document.DocumentNumber}",
-                $"{document.DocumentNumber} Rev {document.Revision:00} — \"{document.Title}\" is waiting on your "
-                + $"signature at step {request.StepOrder} ({request.StepLabel}).",
-                DedupeKey(NotificationKind.SignaturePending, request.Id, recipient.Id, today),
-                document.Id));
+            var rule = Resolve(applicableRules, document.DocumentTypeId);
+            if (rule is null)
+            {
+                continue;
+            }
+
+            // Age threshold: a step assigned this morning shouldn't be chased this evening.
+            if (clock.UtcNow - request.CreatedAt < TimeSpan.FromDays(rule.LeadDays))
+            {
+                continue;
+            }
+
+            var context = await DocumentTokensAsync(document, cancellationToken);
+            context[MessageTemplate.Tokens.StepLabel] = request.StepLabel;
+            context[MessageTemplate.Tokens.StepOrder] = request.StepOrder.ToString(CultureInfo.InvariantCulture);
+
+            candidates.AddRange(
+                await ExpandAsync(rule, document, request.Id, context, request.UserId, cancellationToken));
         }
 
         return await QueueAsync(candidates, cancellationToken);
     }
 
-    private async Task<int> QueueUnacknowledgedCopyRemindersAsync(CancellationToken cancellationToken)
+    private async Task<int> UnacknowledgedCopyRemindersAsync(CancellationToken cancellationToken)
     {
-        var cutoff = clock.UtcNow.AddDays(-UnacknowledgedAfterDays);
-        var today = clock.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-
-        var stale = await distributions.ListUnacknowledgedBeforeAsync(cutoff, cancellationToken);
-        if (stale.Count == 0)
+        var applicableRules = await rules.FindEnabledAsync(NotificationKind.CopyUnacknowledged, cancellationToken);
+        if (applicableRules.Count == 0)
         {
             return 0;
         }
+
+        var widest = applicableRules.Select(r => r.LeadDays).DefaultIfEmpty(0).Max();
+        var stale = await distributions.ListUnacknowledgedBeforeAsync(
+            clock.UtcNow.AddDays(-widest), cancellationToken);
 
         var candidates = new List<PendingNotification>();
 
         foreach (var copy in stale)
         {
-            // Chased back to whoever issued it, not to the recipient: the recipient may not be
-            // a system user at all, and the issuer is the person accountable for the copy
-            // reaching them.
-            var issuer = await users.GetByUserNameAsync(copy.IssuedBy, cancellationToken);
-            if (issuer is null || !issuer.IsActive)
-            {
-                continue;
-            }
-
             var document = await documents.GetAsync(copy.DocumentId, cancellationToken);
             if (document is null)
             {
                 continue;
             }
 
-            candidates.Add(new PendingNotification(
-                issuer,
-                NotificationKind.CopyUnacknowledged,
-                $"Copy {copy.CopyNumber} not acknowledged: {document.DocumentNumber}",
-                $"{copy.CopyType} copy {copy.CopyNumber} of {document.DocumentNumber} was issued to "
-                + $"{copy.IssuedToName} on {copy.CreatedAt:yyyy-MM-dd} and has not been acknowledged.",
-                DedupeKey(NotificationKind.CopyUnacknowledged, copy.Id, issuer.Id, today),
-                document.Id));
-        }
-
-        return await QueueAsync(candidates, cancellationToken);
-    }
-
-    private async Task<int> QueueRetrievalRemindersAsync(CancellationToken cancellationToken)
-    {
-        var outstanding = await distributions.ListPendingRetrievalAsync(null, cancellationToken);
-        if (outstanding.Count == 0)
-        {
-            return 0;
-        }
-
-        var today = clock.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        var candidates = new List<PendingNotification>();
-
-        foreach (var (copy, document) in outstanding)
-        {
-            var issuer = await users.GetByUserNameAsync(copy.IssuedBy, cancellationToken);
-            if (issuer is null || !issuer.IsActive)
+            var rule = Resolve(applicableRules, document.DocumentTypeId);
+            if (rule is null || clock.UtcNow - copy.CreatedAt < TimeSpan.FromDays(rule.LeadDays))
             {
                 continue;
             }
 
-            candidates.Add(new PendingNotification(
-                issuer,
-                NotificationKind.CopyRetrievalRequired,
-                $"Retrieve copy {copy.CopyNumber}: {document.DocumentNumber}",
-                $"{document.DocumentNumber} Rev {document.Revision:00} is {document.Status}, but "
-                + $"{copy.CopyType} copy {copy.CopyNumber} is still held by {copy.IssuedToName}. "
-                + "Collect it, or record it as destroyed or lost.",
-                DedupeKey(NotificationKind.CopyRetrievalRequired, copy.Id, issuer.Id, today),
-                document.Id));
+            var context = await DocumentTokensAsync(document, cancellationToken);
+            AddCopyTokens(context, copy);
+
+            candidates.AddRange(
+                await ExpandAsync(rule, document, copy.Id, context, null, cancellationToken, copy));
         }
 
         return await QueueAsync(candidates, cancellationToken);
     }
 
+    private async Task<int> RetrievalRemindersAsync(CancellationToken cancellationToken)
+    {
+        var applicableRules = await rules.FindEnabledAsync(NotificationKind.CopyRetrievalRequired, cancellationToken);
+        if (applicableRules.Count == 0)
+        {
+            return 0;
+        }
+
+        var outstanding = await distributions.ListPendingRetrievalAsync(null, cancellationToken);
+        var candidates = new List<PendingNotification>();
+
+        foreach (var (copy, document) in outstanding)
+        {
+            var rule = Resolve(applicableRules, document.DocumentTypeId);
+            if (rule is null)
+            {
+                continue;
+            }
+
+            var context = await DocumentTokensAsync(document, cancellationToken);
+            AddCopyTokens(context, copy);
+
+            candidates.AddRange(
+                await ExpandAsync(rule, document, copy.Id, context, null, cancellationToken, copy));
+        }
+
+        return await QueueAsync(candidates, cancellationToken);
+    }
+
+    private async Task<int> DispositionRemindersAsync(CancellationToken cancellationToken)
+    {
+        var applicableRules = await rules.FindEnabledAsync(NotificationKind.DispositionDue, cancellationToken);
+        if (applicableRules.Count == 0)
+        {
+            return 0;
+        }
+
+        var today = clock.Today;
+        var due = await documents.ListDueForDispositionAsync(today, null, cancellationToken);
+        var candidates = new List<PendingNotification>();
+
+        foreach (var document in due)
+        {
+            var rule = Resolve(applicableRules, document.DocumentTypeId);
+            if (rule is null)
+            {
+                continue;
+            }
+
+            var context = await DocumentTokensAsync(document, cancellationToken);
+            context[MessageTemplate.Tokens.RetainUntil] =
+                document.RetainUntil?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "";
+            context[MessageTemplate.Tokens.DaysOverdue] = document.RetainUntil is { } until
+                ? Math.Max(0, today.DayNumber - until.DayNumber).ToString(CultureInfo.InvariantCulture)
+                : "0";
+
+            candidates.AddRange(await ExpandAsync(rule, document, document.Id, context, null, cancellationToken));
+        }
+
+        return await QueueAsync(candidates, cancellationToken);
+    }
+
+    /// <summary>Most-specific-wins, same precedence as every other policy in the system.</summary>
+    private static NotificationRule? Resolve(IReadOnlyList<NotificationRule> candidates, Guid documentTypeId) =>
+        candidates
+            .Where(r => r.DocumentTypeId is null || r.DocumentTypeId == documentTypeId)
+            .OrderByDescending(r => r.Specificity)
+            .FirstOrDefault();
+
     /// <summary>
-    /// Filters out anything already queued under the same key, then persists the rest. The
-    /// bulk key check keeps a sweep to one round trip instead of one per candidate; the unique
-    /// index on the column is what actually guarantees uniqueness when two instances race.
+    /// Turns one rule plus one subject into a notification per resolved recipient, rendering
+    /// the templates with that recipient's own tokens.
+    /// </summary>
+    private async Task<List<PendingNotification>> ExpandAsync(
+        NotificationRule rule,
+        ControlledDocument document,
+        Guid subjectId,
+        Dictionary<string, string> context,
+        Guid? stepAssigneeId,
+        CancellationToken cancellationToken,
+        DocumentDistribution? copy = null)
+    {
+        var recipients = await ResolveRecipientsAsync(rule, document, stepAssigneeId, copy, cancellationToken);
+        var period = rule.PeriodKeyFor(clock.Today);
+        var results = new List<PendingNotification>();
+
+        foreach (var recipient in recipients)
+        {
+            var values = new Dictionary<string, string>(context, StringComparer.Ordinal)
+            {
+                [MessageTemplate.Tokens.Recipient] = recipient.UserName,
+                [MessageTemplate.Tokens.RecipientFullName] = recipient.FullName,
+            };
+
+            results.Add(new PendingNotification(
+                recipient,
+                rule.Kind,
+                MessageTemplate.Render(rule.SubjectTemplate, values),
+                MessageTemplate.Render(rule.BodyTemplate, values),
+                $"{rule.Kind}:{subjectId:N}:{recipient.Id:N}:{period}",
+                document.Id));
+        }
+
+        return results;
+    }
+
+    private async Task<IReadOnlyList<DmsUser>> ResolveRecipientsAsync(
+        NotificationRule rule,
+        ControlledDocument document,
+        Guid? stepAssigneeId,
+        DocumentDistribution? copy,
+        CancellationToken cancellationToken)
+    {
+        switch (rule.RecipientMode)
+        {
+            case NotificationRecipientMode.DocumentAuthor:
+                return await OneAsync(() => users.GetByUserNameAsync(document.Author, cancellationToken));
+
+            case NotificationRecipientMode.CopyIssuer:
+                return copy is null
+                    ? []
+                    : await OneAsync(() => users.GetByUserNameAsync(copy.IssuedBy, cancellationToken));
+
+            case NotificationRecipientMode.StepAssignee:
+                return stepAssigneeId is { } assignee
+                    ? await OneAsync(() => users.GetAsync(assignee, cancellationToken))
+                    : [];
+
+            case NotificationRecipientMode.RoleHolders:
+            {
+                if (rule.RecipientRoleId is not { } roleId)
+                {
+                    return [];
+                }
+
+                // Scoped to the document's own site and department, so "the QA head" means the
+                // one at the plant that owns this SOP — not every QA head in the company.
+                var assignments = await roles.ListAssignmentsAsync(null, roleId, cancellationToken);
+
+                var userIds = assignments
+                    .Where(a => a.AppliesTo(document.SiteId, document.DepartmentId))
+                    .Select(a => a.UserId)
+                    .Distinct()
+                    .ToList();
+
+                var resolved = new List<DmsUser>();
+                foreach (var userId in userIds)
+                {
+                    var user = await users.GetAsync(userId, cancellationToken);
+                    if (user is { IsActive: true })
+                    {
+                        resolved.Add(user);
+                    }
+                }
+
+                return resolved;
+            }
+
+            default:
+                return [];
+        }
+    }
+
+    private static async Task<IReadOnlyList<DmsUser>> OneAsync(Func<Task<DmsUser?>> lookup)
+    {
+        var user = await lookup();
+        return user is { IsActive: true } ? [user] : [];
+    }
+
+    private async Task<Dictionary<string, string>> DocumentTokensAsync(
+        ControlledDocument document,
+        CancellationToken cancellationToken)
+    {
+        var site = await sites.GetAsync(document.SiteId, cancellationToken);
+        var department = await departments.GetAsync(document.DepartmentId, cancellationToken);
+
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [MessageTemplate.Tokens.DocumentNumber] = document.DocumentNumber,
+            [MessageTemplate.Tokens.Title] = document.Title,
+            [MessageTemplate.Tokens.Revision] = DocumentNumberFormat.ComposeRevision(document.Revision),
+            [MessageTemplate.Tokens.Status] = document.Status.ToString(),
+            [MessageTemplate.Tokens.Site] = site?.Name ?? "",
+            [MessageTemplate.Tokens.Department] = department?.Name ?? "",
+        };
+    }
+
+    private static void AddCopyTokens(Dictionary<string, string> context, DocumentDistribution copy)
+    {
+        context[MessageTemplate.Tokens.CopyNumber] = copy.CopyNumber.ToString(CultureInfo.InvariantCulture);
+        context[MessageTemplate.Tokens.CopyType] = copy.CopyType.ToString();
+        context[MessageTemplate.Tokens.IssuedTo] = copy.IssuedToName;
+        context[MessageTemplate.Tokens.IssuedOn] = copy.CreatedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Filters out anything already queued under the same key, then persists the rest. The bulk
+    /// key check keeps a sweep to one round trip; the unique index on the column is what
+    /// actually guarantees uniqueness when two instances race.
     /// </summary>
     private async Task<int> QueueAsync(
         IReadOnlyList<PendingNotification> candidates,
@@ -260,7 +409,8 @@ public sealed class ReminderJob(
         }
 
         var keys = candidates.Select(c => c.DedupeKey).Distinct().ToList();
-        var existing = (await notifications.FindExistingDedupeKeysAsync(keys, cancellationToken)).ToHashSet(StringComparer.Ordinal);
+        var existing = (await notifications.FindExistingDedupeKeysAsync(keys, cancellationToken))
+            .ToHashSet(StringComparer.Ordinal);
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var queued = 0;
@@ -293,13 +443,7 @@ public sealed class ReminderJob(
         return queued;
     }
 
-    private static string DedupeKey(NotificationKind kind, Guid subjectId, Guid recipientId, string period) =>
-        $"{kind}:{subjectId:N}:{recipientId:N}:{period}";
-
-    private static async Task<int> SafelyAsync(
-        Func<Task<int>> section,
-        string label,
-        List<string> errors)
+    private static async Task<int> SafelyAsync(Func<Task<int>> section, string label, List<string> errors)
     {
         try
         {
