@@ -171,6 +171,12 @@ public enum AuditAction
     EditingSaveAccepted,
     EditingSaveRejected,
     EditingSessionForceClosed,
+
+    // Authentication. Distinct from the signing events — these concern the general login
+    // credential, which §11.200 keeps separate from the e-signature credential.
+    UserLoggedIn,
+    UserLoginFailed,
+    UserLoginLockedOut,
 }
 
 /// <summary>Why a person is on a signature route.</summary>
