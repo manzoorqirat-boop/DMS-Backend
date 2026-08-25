@@ -203,19 +203,21 @@ public sealed class DocumentLifecycleService(
     /// pre-intimation window — while anything already past its date is included regardless and
     /// sorts to the top.
     /// </summary>
-    public async Task<IReadOnlyList<ReviewDueView>> ListDueForReviewAsync(
+    public async Task<PagedResult<ReviewDueView>> ListDueForReviewAsync(
         int withinDays,
         Guid? siteId,
         Guid? departmentId,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var horizon = today.AddDays(Math.Clamp(withinDays, 0, 3650));
 
-        var due = await documents.ListDueForReviewAsync(horizon, siteId, departmentId, cancellationToken);
+        var due = await documents.ListDueForReviewAsync(
+            horizon, siteId, departmentId, paging, cancellationToken);
 
         return due
-            .Select(d => new ReviewDueView(
+            .Map(d => new ReviewDueView(
                 d.Id,
                 d.DocumentNumber,
                 d.Title,
@@ -225,8 +227,7 @@ public sealed class DocumentLifecycleService(
                 d.NextReviewDate!.Value.DayNumber - today.DayNumber,
                 d.NextReviewDate!.Value < today,
                 d.LastReviewedAt,
-                d.LastReviewedBy))
-            .ToList();
+                d.LastReviewedBy));
     }
 
     public async Task<Result<ReviewPolicyView>> CreatePolicyAsync(
