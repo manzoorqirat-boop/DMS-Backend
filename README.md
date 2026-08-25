@@ -62,6 +62,42 @@ the draft, which is what makes the content hash recorded against each signature 
 Signatures are append-only through the same three layers as the audit trail: no mutators, the
 `SaveChanges` guard, and database triggers.
 
+## Reminders & scheduling
+
+`ReminderJob` sweeps daily for four things: reviews coming due, reviews overdue, signatures
+pending, and controlled copies either unacknowledged after 7 days or still owed back. Each
+queues a `Notification` row rather than mailing inline — a job that mails directly has no
+record of what it sent and duplicates everything when it runs twice.
+
+**Idempotency** comes from a dedupe key scoped to the period, backed by
+`ux_notifications_dedupe_key`. The job checks keys in bulk first, but that's read-then-write;
+the unique index is what actually holds when two instances sweep in the same second. So the
+manual trigger is safe to press repeatedly.
+
+Overdue reminders repeat daily; coming-due ones are keyed to the due date, so they queue once
+rather than every day of the pre-intimation window.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/api/notifications?unreadOnly=` | The caller's own notifications |
+| `POST` | `/api/notifications/{id}/read` | Mark read; scoped to the caller |
+| `GET` | `/api/jobs/runs` | Evidence the sweep ran, including empty runs |
+| `POST` | `/api/jobs/reminders/run` | Trigger now |
+
+`ScheduledJobRun` records **every** run, including ones that found nothing. A job that
+silently stops firing looks identical to a job with nothing to report unless the empty
+successes are on record — and by then the missing reminders have already happened.
+
+The scheduler is a `BackgroundService`, **disabled by default** (`Scheduler:Enabled`). Each
+section of the sweep is independently guarded, so a failure gathering signature reminders
+doesn't cost the review reminders; the run record says which part failed.
+
+> ### ⚠ Nothing is actually mailed
+> `LoggingNotificationSender` writes to the application log and reports success, so the queue
+> drains instead of piling up as Pending forever. SMTP configuration is deployment-specific
+> and undecided. **Replace before go-live** — a reminder system that reports success without
+> delivering is worse than one that visibly fails.
+
 ## Distribution & controlled printing
 
 `DocumentDistribution` records every issued copy — number, holder, type, print limit and
@@ -352,9 +388,12 @@ dotnet run --project src/Dms.Api
   before it's anything other than a dev store.
 - **No tests.** `DocxTemplateValidator` is pure and I/O-free specifically so it can be
   covered against a folder of good and bad sample `.docx` files without a database.
-- **No scheduler.** The review-due report exists but nothing runs it — there's no background
-  job emailing owners at the pre-intimation threshold. `PreIntimationDays` is stored and
-  returned but not yet acted on automatically.
+- **Mail transport** — see the warning above. The queue, dedupe and run evidence are real;
+  delivery is not.
+- **Reminders go to the document author**, since there's no department-owner concept yet. The
+  author is the closest attributable person but often isn't who should be chased.
+- **`PreIntimationDays` is stored but not yet read by the sweep**, which uses a fixed 30-day
+  window. Wiring the per-type value in is a small change to `ReminderJob`.
 - **No retention scheduling.** Obsolete documents are retained indefinitely; nothing tracks a
   retention period or flags records eligible for destruction.
 - **Watermark rendering** — see the warning above. The control layer is complete; the
