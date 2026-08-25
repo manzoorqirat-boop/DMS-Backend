@@ -29,6 +29,8 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     public DbSet<ReviewPolicy> ReviewPolicies => Set<ReviewPolicy>();
     public DbSet<DocumentDistribution> DocumentDistributions => Set<DocumentDistribution>();
     public DbSet<PrintEvent> PrintEvents => Set<PrintEvent>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<ScheduledJobRun> ScheduledJobRuns => Set<ScheduledJobRun>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -43,6 +45,9 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
         builder.Properties<MetadataSource>().HaveConversion<string>().HaveMaxLength(64);
         builder.Properties<CopyType>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<DistributionStatus>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<NotificationKind>().HaveConversion<string>().HaveMaxLength(48);
+        builder.Properties<NotificationStatus>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<JobRunStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureRole>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureRequestStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureMeaning>().HaveConversion<string>().HaveMaxLength(32);
