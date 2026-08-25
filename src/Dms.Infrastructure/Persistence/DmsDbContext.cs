@@ -33,6 +33,7 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<ScheduledJobRun> ScheduledJobRuns => Set<ScheduledJobRun>();
     public DbSet<EditingSession> EditingSessions => Set<EditingSession>();
+    public DbSet<NotificationRule> NotificationRules => Set<NotificationRule>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -53,6 +54,7 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
         builder.Properties<RetentionTrigger>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<DispositionAction>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<EditingSessionStatus>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<NotificationRecipientMode>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureRole>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureRequestStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureMeaning>().HaveConversion<string>().HaveMaxLength(32);
