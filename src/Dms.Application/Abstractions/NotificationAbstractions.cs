@@ -73,3 +73,22 @@ public interface IClock
 
     DateOnly Today => DateOnly.FromDateTime(UtcNow.UtcDateTime);
 }
+
+public interface INotificationRuleRepository
+{
+    /// <summary>
+    /// Enabled rules for a kind that could apply to a document type. The caller picks the most
+    /// specific — resolution order is a domain decision, not a query detail.
+    /// </summary>
+    Task<IReadOnlyList<NotificationRule>> FindEnabledAsync(
+        NotificationKind kind,
+        CancellationToken cancellationToken);
+
+    Task<NotificationRule?> GetAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<NotificationRule>> ListAsync(NotificationKind? kind, CancellationToken cancellationToken);
+
+    void Add(NotificationRule rule);
+
+    Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
+}
