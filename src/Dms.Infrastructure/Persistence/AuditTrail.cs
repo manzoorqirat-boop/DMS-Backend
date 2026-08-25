@@ -1,4 +1,5 @@
 using Dms.Application.Abstractions;
+using Dms.Application.Common;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -31,10 +32,13 @@ public sealed class AuditTrail(DmsDbContext db, ICurrentUser currentUser) : IAud
         db.AuditEvents.Add(new AuditEvent(action, entityType, entityId, entityLabel, actor, details));
     }
 
-    public async Task<IReadOnlyList<AuditEvent>> ListAsync(
+    public async Task<PagedResult<AuditEvent>> ListAsync(
         Guid? entityId,
         string? entityType,
-        int limit,
+        string? actor,
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
         var query = db.AuditEvents.AsNoTracking();
@@ -49,9 +53,25 @@ public sealed class AuditTrail(DmsDbContext db, ICurrentUser currentUser) : IAud
             query = query.Where(x => x.EntityType == entityType);
         }
 
+        if (!string.IsNullOrWhiteSpace(actor))
+        {
+            query = query.Where(x => x.Actor == actor);
+        }
+
+        // Date bounds matter more here than anywhere else: "show me everything that happened
+        // to this document between these dates" is the question an inspector actually asks.
+        if (from is { } start)
+        {
+            query = query.Where(x => x.OccurredAt >= start);
+        }
+
+        if (to is { } end)
+        {
+            query = query.Where(x => x.OccurredAt <= end);
+        }
+
         return await query
             .OrderByDescending(x => x.OccurredAt)
-            .Take(Math.Clamp(limit, 1, 500))
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
     }
 }
