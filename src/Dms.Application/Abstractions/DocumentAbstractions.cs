@@ -76,6 +76,15 @@ public interface IControlledDocumentRepository
     /// Effective documents whose next review falls on or before <paramref name="dueBy"/>.
     /// Ordered by due date so the most overdue sits at the top of the report.
     /// </summary>
+    /// <summary>
+    /// Records whose retention has expired and which have no disposition decision yet — the
+    /// disposition worklist. Nothing acts on this automatically; it is a list for a person.
+    /// </summary>
+    Task<IReadOnlyList<ControlledDocument>> ListDueForDispositionAsync(
+        DateOnly asOf,
+        Guid? siteId,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<ControlledDocument>> ListDueForReviewAsync(
         DateOnly dueBy,
         Guid? siteId,
@@ -208,3 +217,19 @@ public interface IControlledPrintRenderer
 /// than hidden, so nobody mistakes an unstamped file for a controlled copy.
 /// </param>
 public sealed record PrintRenderResult(byte[] Content, string ContentType, bool IsWatermarked);
+
+public interface IRetentionPolicyRepository
+{
+    Task<IReadOnlyList<RetentionPolicy>> FindCandidatesAsync(
+        Guid documentTypeId,
+        Guid siteId,
+        CancellationToken cancellationToken);
+
+    Task<RetentionPolicy?> GetAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<RetentionPolicy>> ListAsync(Guid? documentTypeId, CancellationToken cancellationToken);
+
+    void Add(RetentionPolicy policy);
+
+    Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
+}
