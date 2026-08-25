@@ -147,3 +147,56 @@ public interface IReviewPolicyRepository
 
     Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
 }
+
+public interface IDistributionRepository
+{
+    Task<DocumentDistribution?> GetAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<DocumentDistribution>> ListForDocumentAsync(
+        Guid documentId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Highest copy number issued for a document, or 0. Copy numbers are never reused.</summary>
+    Task<int> GetHighestCopyNumberAsync(Guid documentId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Copies still in circulation for documents that are no longer current — the retrieval
+    /// worklist. Joins to document status rather than requiring a flag to be maintained on the
+    /// distribution, so a superseded document can never have stale outstanding-copy state.
+    /// </summary>
+    Task<IReadOnlyList<(DocumentDistribution Copy, ControlledDocument Document)>> ListPendingRetrievalAsync(
+        Guid? siteId,
+        CancellationToken cancellationToken);
+
+    void Add(DocumentDistribution distribution);
+
+    void AddPrintEvent(PrintEvent printEvent);
+
+    Task<IReadOnlyList<PrintEvent>> ListPrintEventsAsync(Guid documentId, CancellationToken cancellationToken);
+
+    Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Renders a watermarked, print-ready copy.
+/// <para>
+/// An interface because the actual rendering — stamping the watermark across each page and
+/// flattening to PDF — needs a document converter that isn't wired up yet. The <b>control</b>
+/// around printing is real and enforced regardless: authorisation, print limits, the print
+/// record and its audit entry all happen whether or not the bytes come back watermarked.
+/// </para>
+/// </summary>
+public interface IControlledPrintRenderer
+{
+    Task<PrintRenderResult> RenderAsync(
+        byte[] source,
+        string watermark,
+        string scanCode,
+        CancellationToken cancellationToken);
+}
+
+/// <param name="IsWatermarked">
+/// False when the renderer passed the file through unchanged. Surfaced to the caller rather
+/// than hidden, so nobody mistakes an unstamped file for a controlled copy.
+/// </param>
+public sealed record PrintRenderResult(byte[] Content, string ContentType, bool IsWatermarked);
