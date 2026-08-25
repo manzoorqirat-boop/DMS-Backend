@@ -100,6 +100,7 @@ public static class DependencyInjection
         services.AddScoped<NumberingRuleService>();
         services.AddScoped<WorkflowDefinitionService>();
         services.AddScoped<MetadataFieldService>();
+        services.AddScoped<DocumentRevisionService>();
 
         return services;
     }
