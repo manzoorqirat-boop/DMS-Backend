@@ -29,6 +29,7 @@ public sealed class ReviewWorkflowService(
     ISigningPolicy policy,
     WorkflowDefinitionService workflows,
     DocumentLifecycleService lifecycle,
+    RetentionService retention,
     IAuditTrail audit,
     ICurrentUser currentUser)
 {
@@ -474,6 +475,8 @@ public sealed class ReviewWorkflowService(
 
         if (predecessor is not null && predecessor.Id != document.Id)
         {
+            await retention.StartRetentionAsync(predecessor, RetentionTrigger.Superseded, cancellationToken);
+
             audit.Record(
                 AuditAction.DocumentSuperseded, EntityType, predecessor.Id, predecessor.DocumentNumber,
                 $"Rev {predecessor.Revision:00} superseded by Rev {document.Revision:00}.");
