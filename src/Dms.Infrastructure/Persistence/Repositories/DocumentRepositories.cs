@@ -239,3 +239,70 @@ public sealed class UnitOfWork(DmsDbContext db) : IUnitOfWork
         }, cancellationToken);
     }
 }
+
+public sealed class DistributionRepository(DmsDbContext db) : IDistributionRepository
+{
+    public Task<DocumentDistribution?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+        db.DocumentDistributions.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<DocumentDistribution>> ListForDocumentAsync(
+        Guid documentId,
+        CancellationToken cancellationToken) =>
+        await db.DocumentDistributions
+            .Where(x => x.DocumentId == documentId)
+            .OrderBy(x => x.CopyNumber)
+            .ToListAsync(cancellationToken);
+
+    public async Task<int> GetHighestCopyNumberAsync(Guid documentId, CancellationToken cancellationToken)
+    {
+        var highest = await db.DocumentDistributions
+            .Where(x => x.DocumentId == documentId)
+            .Select(x => (int?)x.CopyNumber)
+            .MaxAsync(cancellationToken);
+
+        return highest ?? 0;
+    }
+
+    public async Task<IReadOnlyList<(DocumentDistribution Copy, ControlledDocument Document)>>
+        ListPendingRetrievalAsync(Guid? siteId, CancellationToken cancellationToken)
+    {
+        // Joined to document status rather than maintaining a flag on the distribution: a
+        // supersession then can't leave stale outstanding-copy state behind, because there is
+        // no derived state to leave stale.
+        var query =
+            from copy in db.DocumentDistributions
+            join document in db.ControlledDocuments on copy.DocumentId equals document.Id
+            where copy.CopyType != CopyType.Uncontrolled
+                && (copy.Status == DistributionStatus.Issued || copy.Status == DistributionStatus.Acknowledged)
+                && (document.Status == DocumentStatus.Superseded || document.Status == DocumentStatus.Obsolete)
+            select new { copy, document };
+
+        if (siteId is { } site)
+        {
+            query = query.Where(x => x.document.SiteId == site);
+        }
+
+        var rows = await query
+            .OrderBy(x => x.document.DocumentNumber)
+            .ThenBy(x => x.copy.CopyNumber)
+            .ToListAsync(cancellationToken);
+
+        return rows.Select(x => (x.copy, x.document)).ToList();
+    }
+
+    public void Add(DocumentDistribution distribution) => db.DocumentDistributions.Add(distribution);
+
+    public void AddPrintEvent(PrintEvent printEvent) => db.PrintEvents.Add(printEvent);
+
+    public async Task<IReadOnlyList<PrintEvent>> ListPrintEventsAsync(
+        Guid documentId,
+        CancellationToken cancellationToken) =>
+        await db.PrintEvents
+            .AsNoTracking()
+            .Where(x => x.DocumentId == documentId)
+            .OrderByDescending(x => x.PrintedAt)
+            .ToListAsync(cancellationToken);
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
