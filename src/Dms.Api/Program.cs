@@ -17,6 +17,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddProblemDetails();
+builder.Services.AddDmsOpenApi();
 
 builder.Services.AddHostedService<DailyReminderService>();
 builder.Services.AddHttpContextAccessor();
@@ -84,6 +85,7 @@ builder.Services.Configure<FormOptions>(options =>
 var app = builder.Build();
 
 app.UseStatusCodePages();
+app.UseDmsOpenApi();
 
 if (corsOrigins.Length > 0)
 {
