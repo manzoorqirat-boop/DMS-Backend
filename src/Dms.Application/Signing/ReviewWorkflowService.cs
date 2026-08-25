@@ -438,9 +438,22 @@ public sealed class ReviewWorkflowService(
             return Error.NotFound("document_not_found", $"No document with id {documentId}.");
         }
 
+        // The predecessor, if this is a revision. Resolved before anything changes so that
+        // standing it down and promoting the successor flush together — a family left with two
+        // current revisions, or none, would leave "which version do I follow" unanswerable.
+        var predecessor = await documents.GetCurrentRevisionAsync(document.FamilyId, cancellationToken);
+
         try
         {
             document.MakeEffective(effectiveDate, DateOnly.FromDateTime(DateTime.UtcNow));
+
+            if (predecessor is not null && predecessor.Id != document.Id)
+            {
+                predecessor.Supersede();
+                predecessor.StandDown();
+            }
+
+            document.PromoteToCurrent();
         }
         catch (InvalidOperationException ex)
         {
@@ -449,9 +462,23 @@ public sealed class ReviewWorkflowService(
 
         audit.Record(
             AuditAction.DocumentMadeEffective, EntityType, document.Id, document.DocumentNumber,
-            $"Effective {effectiveDate:yyyy-MM-dd}.");
+            $"Rev {document.Revision:00} effective {effectiveDate:yyyy-MM-dd}.");
+
+        if (predecessor is not null && predecessor.Id != document.Id)
+        {
+            audit.Record(
+                AuditAction.DocumentSuperseded, EntityType, predecessor.Id, predecessor.DocumentNumber,
+                $"Rev {predecessor.Revision:00} superseded by Rev {document.Revision:00}.");
+        }
 
         var outcome = await documents.SaveChangesAsync(cancellationToken);
+        if (!outcome.Saved && outcome.ViolatedIndexContains("one_current_per_family"))
+        {
+            return Error.Conflict(
+                "revision_issue_conflict",
+                "Another revision of this document was issued concurrently. Reload and retry.");
+        }
+
         return outcome.Saved
             ? new DocumentIssueView(document.DocumentNumber, document.Status, document.EffectiveDate)
             : Error.Conflict(
