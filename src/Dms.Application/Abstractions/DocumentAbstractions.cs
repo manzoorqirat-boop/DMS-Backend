@@ -47,11 +47,16 @@ public interface IControlledDocumentRepository
 {
     Task<ControlledDocument?> GetAsync(Guid id, CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<ControlledDocument>> ListAsync(
+    /// <param name="search">
+    /// Case-insensitive match on document number or title. Null or blank means no filter.
+    /// </param>
+    Task<PagedResult<ControlledDocument>> ListAsync(
         Guid? siteId,
         Guid? departmentId,
         Guid? documentTypeId,
         bool currentRevisionsOnly,
+        string? search,
+        PagedRequest paging,
         CancellationToken cancellationToken);
 
     /// <summary>Every revision of one document, oldest first.</summary>
@@ -80,15 +85,17 @@ public interface IControlledDocumentRepository
     /// Records whose retention has expired and which have no disposition decision yet — the
     /// disposition worklist. Nothing acts on this automatically; it is a list for a person.
     /// </summary>
-    Task<IReadOnlyList<ControlledDocument>> ListDueForDispositionAsync(
+    Task<PagedResult<ControlledDocument>> ListDueForDispositionAsync(
         DateOnly asOf,
         Guid? siteId,
+        PagedRequest paging,
         CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<ControlledDocument>> ListDueForReviewAsync(
+    Task<PagedResult<ControlledDocument>> ListDueForReviewAsync(
         DateOnly dueBy,
         Guid? siteId,
         Guid? departmentId,
+        PagedRequest paging,
         CancellationToken cancellationToken);
 
     void Add(ControlledDocument document);
@@ -173,8 +180,9 @@ public interface IDistributionRepository
     /// worklist. Joins to document status rather than requiring a flag to be maintained on the
     /// distribution, so a superseded document can never have stale outstanding-copy state.
     /// </summary>
-    Task<IReadOnlyList<(DocumentDistribution Copy, ControlledDocument Document)>> ListPendingRetrievalAsync(
+    Task<PagedResult<(DocumentDistribution Copy, ControlledDocument Document)>> ListPendingRetrievalAsync(
         Guid? siteId,
+        PagedRequest paging,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -189,7 +197,10 @@ public interface IDistributionRepository
 
     void AddPrintEvent(PrintEvent printEvent);
 
-    Task<IReadOnlyList<PrintEvent>> ListPrintEventsAsync(Guid documentId, CancellationToken cancellationToken);
+    Task<PagedResult<PrintEvent>> ListPrintEventsAsync(
+        Guid documentId,
+        PagedRequest paging,
+        CancellationToken cancellationToken);
 
     Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
 }
