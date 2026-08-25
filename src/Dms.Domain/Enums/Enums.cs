@@ -142,6 +142,9 @@ public enum AuditAction
     MetadataFieldChanged,
     MetadataFieldRemoved,
     DocumentRevisionStarted,
+    DocumentPeriodicReviewRecorded,
+    ReviewPolicyCreated,
+    ReviewPolicyChanged,
 }
 
 /// <summary>Why a person is on a signature route.</summary>
