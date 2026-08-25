@@ -61,6 +61,7 @@ public static class DependencyInjection
         services.AddScoped<IAccessControl, AccessControl>();
         services.AddScoped<IWorkflowDefinitionRepository, WorkflowDefinitionRepository>();
         services.AddScoped<IMetadataFieldRepository, MetadataFieldRepository>();
+        services.AddScoped<IReviewPolicyRepository, ReviewPolicyRepository>();
 
         var maxAttempts = int.TryParse(configuration[$"{SigningPolicy.SectionName}:MaxFailedAttempts"], out var parsed)
             ? parsed
@@ -101,6 +102,7 @@ public static class DependencyInjection
         services.AddScoped<WorkflowDefinitionService>();
         services.AddScoped<MetadataFieldService>();
         services.AddScoped<DocumentRevisionService>();
+        services.AddScoped<DocumentLifecycleService>();
 
         return services;
     }
