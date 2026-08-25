@@ -139,3 +139,36 @@ public sealed class EditingSessionRepository(DmsDbContext db) : IEditingSessionR
     public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
         SaveChangesTranslator.SaveAsync(db, cancellationToken);
 }
+
+public sealed class NotificationRuleRepository(DmsDbContext db) : INotificationRuleRepository
+{
+    public async Task<IReadOnlyList<NotificationRule>> FindEnabledAsync(
+        NotificationKind kind,
+        CancellationToken cancellationToken) =>
+        await db.NotificationRules
+            .AsNoTracking()
+            .Where(r => r.Kind == kind && r.IsEnabled)
+            .ToListAsync(cancellationToken);
+
+    public Task<NotificationRule?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+        db.NotificationRules.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<NotificationRule>> ListAsync(
+        NotificationKind? kind,
+        CancellationToken cancellationToken)
+    {
+        var query = db.NotificationRules.AsQueryable();
+
+        if (kind is { } k)
+        {
+            query = query.Where(x => x.Kind == k);
+        }
+
+        return await query.OrderBy(x => x.Kind).ThenBy(x => x.DocumentTypeId).ToListAsync(cancellationToken);
+    }
+
+    public void Add(NotificationRule rule) => db.NotificationRules.Add(rule);
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
