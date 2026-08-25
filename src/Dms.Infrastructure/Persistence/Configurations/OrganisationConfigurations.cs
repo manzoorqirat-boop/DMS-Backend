@@ -123,6 +123,13 @@ public class ControlledDocumentConfiguration : IEntityTypeConfiguration<Controll
 
         builder.Property(x => x.ObsoleteReason).HasMaxLength(1000);
         builder.Property(x => x.LastReviewedBy).HasMaxLength(128);
+        builder.Property(x => x.DispositionBy).HasMaxLength(128);
+        builder.Property(x => x.DispositionNote).HasMaxLength(1000);
+
+        // Drives the disposition worklist: expired retention, no decision recorded yet.
+        builder.HasIndex(x => x.RetainUntil)
+            .HasFilter("retain_until IS NOT NULL AND disposition IS NULL")
+            .HasDatabaseName("ix_controlled_documents_disposition_due");
 
         // Drives the periodic-review report. Partial, because only Effective documents can be
         // due — indexing the nulls on every draft and superseded revision would be dead weight.
