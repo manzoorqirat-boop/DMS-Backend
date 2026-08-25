@@ -129,6 +129,27 @@ public class ControlledDocument : Entity, ITimestamped
     /// <summary>Why the document was withdrawn from use. Required when obsoleting.</summary>
     public string? ObsoleteReason { get; private set; }
 
+    /// <summary>
+    /// Date this record becomes eligible for disposition. Set when the document leaves active
+    /// use — superseded or obsoleted — from the type's retention policy. Null while in use, or
+    /// when no policy applies.
+    /// </summary>
+    public DateOnly? RetainUntil { get; private set; }
+
+    /// <summary>
+    /// When the stored file was destroyed under an approved disposition. The register row,
+    /// its signatures and its audit trail survive — a retention period permits destroying the
+    /// document, not the evidence that it existed and was controlled.
+    /// </summary>
+    public DateTimeOffset? ContentDestroyedAt { get; private set; }
+
+    /// <summary>Set once a disposition decision is recorded, removing it from the worklist.</summary>
+    public DispositionAction? Disposition { get; private set; }
+
+    public string? DispositionBy { get; private set; }
+
+    public string? DispositionNote { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset? UpdatedAt { get; private set; }
 
@@ -366,6 +387,60 @@ public class ControlledDocument : Entity, ITimestamped
     public void StandDown()
     {
         IsCurrentRevision = false;
+        Touch();
+    }
+
+    /// <summary>
+    /// Starts the retention clock. Called when the document leaves active use, by the service
+    /// that resolved the applicable policy.
+    /// <para>
+    /// Idempotent in the sense that it only ever moves the date forward from an unset state —
+    /// a record whose clock already started must not have it silently reset by a later event,
+    /// or its retention would extend every time something touched it.
+    /// </para>
+    /// </summary>
+    public void StartRetention(DateOnly retainUntil)
+    {
+        RetainUntil ??= retainUntil;
+        Touch();
+    }
+
+    /// <summary>
+    /// Records the decision taken when retention expired.
+    /// <para>
+    /// Deliberately separate from actually deleting the file: this marks what was decided and
+    /// by whom, and the service performs the deletion afterwards. Destruction of a controlled
+    /// record is an authorised act with a name against it, not a background sweep.
+    /// </para>
+    /// </summary>
+    public void RecordDisposition(DispositionAction action, string note, string decidedBy)
+    {
+        if (Status is not (DocumentStatus.Superseded or DocumentStatus.Obsolete))
+        {
+            throw new InvalidOperationException(
+                $"Cannot dispose of {DocumentNumber}: status is {Status}. Only a record that has "
+                + "left active use can be dispositioned.");
+        }
+
+        if (Disposition is { } existing)
+        {
+            throw new InvalidOperationException(
+                $"{DocumentNumber} Rev {Revision:00} was already dispositioned as {existing}.");
+        }
+
+        Disposition = action;
+        DispositionNote = string.IsNullOrWhiteSpace(note)
+            ? throw new ArgumentException("A disposition decision needs a recorded rationale.", nameof(note))
+            : note.Trim();
+        DispositionBy = string.IsNullOrWhiteSpace(decidedBy)
+            ? throw new ArgumentException("Disposition must be attributable.", nameof(decidedBy))
+            : decidedBy;
+
+        if (action == DispositionAction.DestroyContent)
+        {
+            ContentDestroyedAt = DateTimeOffset.UtcNow;
+        }
+
         Touch();
     }
 
