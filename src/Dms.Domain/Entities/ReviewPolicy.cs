@@ -3,12 +3,18 @@ using Dms.Domain.Common;
 namespace Dms.Domain.Entities;
 
 /// <summary>
-/// How often documents of a type must be re-reviewed, and how far ahead to warn.
+/// How often documents of a type must be re-reviewed.
 /// <para>
 /// Master data, resolved most-specific-wins per (type, site) exactly like
 /// <see cref="NumberingRule"/> and <see cref="WorkflowDefinition"/> — an SOP may need
 /// reviewing every two years while a validation protocol never does, and that varies by
 /// customer.
+/// </para>
+/// <para>
+/// How far ahead to warn is deliberately <b>not</b> here — that lives on the notification rule
+/// for the review reminder, where it can differ per reminder kind and be changed without
+/// touching the review schedule itself. Two places to configure one lead time is one place too
+/// many.
 /// </para>
 /// <para>
 /// The interval drives a due date, not an automatic status change. A document does not stop
@@ -25,13 +31,11 @@ public class ReviewPolicy : Entity, ITimestamped
         Guid documentTypeId,
         Guid? siteId,
         int reviewIntervalMonths,
-        int preIntimationDays,
         string createdBy)
     {
         DocumentTypeId = documentTypeId;
         SiteId = siteId;
         ReviewIntervalMonths = ValidInterval(reviewIntervalMonths);
-        PreIntimationDays = ValidPreIntimation(preIntimationDays, ReviewIntervalMonths);
         CreatedBy = string.IsNullOrWhiteSpace(createdBy)
             ? throw new ArgumentException("Review policies must be attributable.", nameof(createdBy))
             : createdBy;
@@ -46,14 +50,6 @@ public class ReviewPolicy : Entity, ITimestamped
     /// <summary>Months from effective date to the next required review.</summary>
     public int ReviewIntervalMonths { get; private set; }
 
-    /// <summary>
-    /// How many days before the due date a document starts appearing in the "coming due"
-    /// report. Long enough that a revision can realistically be drafted, reviewed and approved
-    /// before the current version goes overdue — a warning that arrives the week it expires is
-    /// not a warning.
-    /// </summary>
-    public int PreIntimationDays { get; private set; }
-
     public string CreatedBy { get; private set; } = "";
 
     public DateTimeOffset CreatedAt { get; private set; }
@@ -61,10 +57,9 @@ public class ReviewPolicy : Entity, ITimestamped
 
     public int Specificity => SiteId is null ? 0 : 1;
 
-    public void Update(int reviewIntervalMonths, int preIntimationDays)
+    public void Update(int reviewIntervalMonths)
     {
         ReviewIntervalMonths = ValidInterval(reviewIntervalMonths);
-        PreIntimationDays = ValidPreIntimation(preIntimationDays, ReviewIntervalMonths);
         UpdatedAt = DateTimeOffset.UtcNow;
     }
 
@@ -83,24 +78,4 @@ public class ReviewPolicy : Entity, ITimestamped
             ? months
             : throw new ArgumentOutOfRangeException(
                 nameof(months), months, "Review interval must be between 1 and 240 months.");
-
-    /// <summary>
-    /// Pre-intimation can't exceed the interval itself — a document that starts warning before
-    /// its own review period began would be permanently "coming due", which trains people to
-    /// ignore the report.
-    /// </summary>
-    private static int ValidPreIntimation(int days, int intervalMonths)
-    {
-        if (days < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(days), days, "Pre-intimation days cannot be negative.");
-        }
-
-        var intervalDays = intervalMonths * 30;
-        return days <= intervalDays
-            ? days
-            : throw new ArgumentOutOfRangeException(
-                nameof(days), days,
-                $"Pre-intimation of {days} days exceeds the {intervalMonths}-month review interval.");
-    }
 }
