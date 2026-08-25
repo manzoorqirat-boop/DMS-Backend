@@ -1,6 +1,7 @@
 using Dms.Application.Abstractions;
 using Dms.Application.Common;
 using Dms.Domain.Entities;
+using Dms.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
@@ -70,9 +71,15 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
         Guid? siteId,
         Guid? departmentId,
         Guid? documentTypeId,
+        bool currentRevisionsOnly,
         CancellationToken cancellationToken)
     {
         var query = db.ControlledDocuments.AsQueryable();
+
+        if (currentRevisionsOnly)
+        {
+            query = query.Where(x => x.IsCurrentRevision);
+        }
 
         if (siteId is { } site)
         {
@@ -91,6 +98,29 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
 
         return await query.OrderBy(x => x.DocumentNumber).ToListAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<ControlledDocument>> ListFamilyAsync(
+        Guid familyId,
+        CancellationToken cancellationToken) =>
+        await db.ControlledDocuments
+            .Where(x => x.FamilyId == familyId)
+            .OrderBy(x => x.Revision)
+            .ToListAsync(cancellationToken);
+
+    public Task<ControlledDocument?> GetCurrentRevisionAsync(
+        Guid familyId,
+        CancellationToken cancellationToken) =>
+        db.ControlledDocuments.FirstOrDefaultAsync(
+            x => x.FamilyId == familyId && x.IsCurrentRevision, cancellationToken);
+
+    public Task<ControlledDocument?> GetInFlightRevisionAsync(
+        Guid familyId,
+        CancellationToken cancellationToken) =>
+        db.ControlledDocuments.FirstOrDefaultAsync(
+            x => x.FamilyId == familyId
+                && (x.Status == DocumentStatus.Draft || x.Status == DocumentStatus.InReview
+                    || x.Status == DocumentStatus.Approved),
+            cancellationToken);
 
     public void Add(ControlledDocument document) => db.ControlledDocuments.Add(document);
 
