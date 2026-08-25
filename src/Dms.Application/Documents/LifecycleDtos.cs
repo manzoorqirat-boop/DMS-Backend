@@ -5,8 +5,7 @@ namespace Dms.Application.Documents;
 public sealed record CreateReviewPolicyRequest(
     Guid DocumentTypeId,
     Guid? SiteId,
-    int ReviewIntervalMonths,
-    int PreIntimationDays);
+    int ReviewIntervalMonths);
 
 public sealed record ReviewPolicyView(
     Guid Id,
@@ -14,7 +13,6 @@ public sealed record ReviewPolicyView(
     string DocumentTypeCode,
     Guid? SiteId,
     int ReviewIntervalMonths,
-    int PreIntimationDays,
     string Scope,
     string CreatedBy,
     DateTimeOffset CreatedAt)
@@ -25,7 +23,6 @@ public sealed record ReviewPolicyView(
         documentTypeCode,
         policy.SiteId,
         policy.ReviewIntervalMonths,
-        policy.PreIntimationDays,
         policy.SiteId is null ? "All sites" : "Site override",
         policy.CreatedBy,
         policy.CreatedAt);
