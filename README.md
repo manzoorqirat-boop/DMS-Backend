@@ -62,6 +62,50 @@ the draft, which is what makes the content hash recorded against each signature 
 Signatures are append-only through the same three layers as the audit trail: no mutators, the
 `SaveChanges` guard, and database triggers.
 
+## In-browser editing (check-in / check-out)
+
+Built against **OnlyOffice Document Server** — the plan doc's own recommendation — with the
+provider behind `IEditorSettings` / `IEditorTokenService` / `IEditorContentFetcher` so
+Collabora stays switchable. URS Functions #13 forbids the real file reaching a client PC, so
+download-edit-reupload is out; the document server holds the working copy and the browser only
+sees a rendered view.
+
+`EditingSession` **is** the check-in/check-out mechanism (URS #28). A session rather than a
+boolean flag, so the lock carries who holds it and when it lapses — a bare flag strands
+documents the moment someone closes their laptop mid-edit.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `POST` | `/api/documents/{id}/edit` | Check out; returns the editor launch payload |
+| `POST` | `/api/documents/{id}/edit/release` | Check in, or force-release someone else's lock |
+| `GET` | `/api/documents/{id}/edit/sessions` | Session history |
+| `GET` | `/api/public/editor/{token}/file` | Document server fetches the working copy |
+| `POST` | `/api/public/editor/{token}/callback` | Document server reports a save |
+
+**The save path is the point.** Whatever comes back is checked by `DocxProtectionVerifier`
+before it replaces anything — a lock enforced only by the editor is a lock enforced by the
+client. A file that fails is **quarantined, not discarded and not applied**: discarding would
+destroy the author's work, applying it would accept a document whose protected regions were
+altered. The callback gets a non-zero error so the document server keeps the file.
+
+Some specifics worth knowing:
+
+- Only a **Draft** can be edited. A document in review is frozen against the hash its
+  signatures are applied to.
+- `SessionKey` is fresh per session, never reused — document servers cache against it, and
+  reuse serves the author a stale copy of a document that has since changed.
+- The check-out lock is `ux_editing_sessions_one_active_per_document`, a partial unique index.
+  Two people pressing Edit simultaneously would both see no active session.
+- An expired lock is taken over automatically rather than needing an administrator. Recorded
+  as a distinct event so a pattern of abandoned sessions is visible.
+- `CallbackBaseUrl` is this API **as the document server sees it** — usually an internal
+  address, not what browsers use.
+- `TokenSecret` must be ≥32 chars; startup fails without it once `Url` is set. Those public
+  routes are the only thing between an unauthenticated caller and a document's contents.
+
+Leave `DocumentServer:Url` empty and in-browser editing is disabled — `StartSessionAsync`
+returns `editor_not_configured` rather than rendering an editor that can never save.
+
 ## Retention & disposition
 
 `RetentionPolicy` sets how long records of a type are kept after leaving active use, and from
