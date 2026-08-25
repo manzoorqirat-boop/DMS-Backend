@@ -164,6 +164,13 @@ public enum AuditAction
     RetentionClockStarted,
     DocumentContentDestroyed,
     DocumentRetainedPermanently,
+
+    // Editing sessions (check-out / check-in)
+    DocumentCheckedOut,
+    DocumentCheckedIn,
+    EditingSaveAccepted,
+    EditingSaveRejected,
+    EditingSessionForceClosed,
 }
 
 /// <summary>Why a person is on a signature route.</summary>
@@ -426,4 +433,22 @@ public enum DispositionAction
     /// any schedule and are marked so they stop appearing on the disposition worklist.
     /// </summary>
     RetainPermanently,
+}
+
+public enum EditingSessionStatus
+{
+    /// <summary>Open. The document is checked out and nobody else may edit it.</summary>
+    Active,
+
+    /// <summary>Closed normally — the author finished and the file was saved back.</summary>
+    CheckedIn,
+
+    /// <summary>Closed with no changes saved.</summary>
+    Abandoned,
+
+    /// <summary>
+    /// Force-closed by an administrator. Distinct from Abandoned because breaking someone
+    /// else's lock is an intervention that needs to be visible as one.
+    /// </summary>
+    ForceClosed,
 }
