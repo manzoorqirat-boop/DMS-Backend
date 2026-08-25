@@ -26,6 +26,7 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     public DbSet<WorkflowDefinition> WorkflowDefinitions => Set<WorkflowDefinition>();
     public DbSet<WorkflowStepDefinition> WorkflowStepDefinitions => Set<WorkflowStepDefinition>();
     public DbSet<MetadataFieldDefinition> MetadataFieldDefinitions => Set<MetadataFieldDefinition>();
+    public DbSet<ReviewPolicy> ReviewPolicies => Set<ReviewPolicy>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
