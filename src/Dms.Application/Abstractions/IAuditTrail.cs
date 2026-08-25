@@ -1,3 +1,4 @@
+using Dms.Application.Common;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 
@@ -29,9 +30,12 @@ public interface IAuditTrail
 
 public interface IAuditQuery
 {
-    Task<IReadOnlyList<AuditEvent>> ListAsync(
+    Task<PagedResult<AuditEvent>> ListAsync(
         Guid? entityId,
         string? entityType,
-        int limit,
+        string? actor,
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        PagedRequest paging,
         CancellationToken cancellationToken);
 }
