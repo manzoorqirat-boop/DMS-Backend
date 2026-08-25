@@ -122,6 +122,25 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
                     || x.Status == DocumentStatus.Approved),
             cancellationToken);
 
+    public async Task<IReadOnlyList<ControlledDocument>> ListDueForDispositionAsync(
+        DateOnly asOf,
+        Guid? siteId,
+        CancellationToken cancellationToken)
+    {
+        var query = db.ControlledDocuments
+            .Where(x => x.RetainUntil != null
+                && x.RetainUntil <= asOf
+                && x.Disposition == null
+                && (x.Status == DocumentStatus.Superseded || x.Status == DocumentStatus.Obsolete));
+
+        if (siteId is { } site)
+        {
+            query = query.Where(x => x.SiteId == site);
+        }
+
+        return await query.OrderBy(x => x.RetainUntil).ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<ControlledDocument>> ListDueForReviewAsync(
         DateOnly dueBy,
         Guid? siteId,
