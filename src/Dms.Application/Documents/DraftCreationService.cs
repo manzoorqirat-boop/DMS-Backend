@@ -182,17 +182,19 @@ public sealed class DraftCreationService(
     /// True gives the master list — one row per document, showing the revision in force.
     /// False includes superseded revisions, which is the register view.
     /// </param>
-    public async Task<IReadOnlyList<DocumentSummary>> ListAsync(
+    public async Task<PagedResult<DocumentSummary>> ListAsync(
         Guid? siteId,
         Guid? departmentId,
         Guid? documentTypeId,
         bool currentRevisionsOnly,
+        string? search,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
         var found = await documents.ListAsync(
-            siteId, departmentId, documentTypeId, currentRevisionsOnly, cancellationToken);
+            siteId, departmentId, documentTypeId, currentRevisionsOnly, search, paging, cancellationToken);
 
-        return found.Select(DocumentSummary.From).ToList();
+        return found.Map(DocumentSummary.From);
     }
 
     public async Task<Result<DocumentSummary>> WithdrawAsync(Guid id, CancellationToken cancellationToken)
