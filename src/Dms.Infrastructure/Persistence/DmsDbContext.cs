@@ -27,6 +27,8 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     public DbSet<WorkflowStepDefinition> WorkflowStepDefinitions => Set<WorkflowStepDefinition>();
     public DbSet<MetadataFieldDefinition> MetadataFieldDefinitions => Set<MetadataFieldDefinition>();
     public DbSet<ReviewPolicy> ReviewPolicies => Set<ReviewPolicy>();
+    public DbSet<DocumentDistribution> DocumentDistributions => Set<DocumentDistribution>();
+    public DbSet<PrintEvent> PrintEvents => Set<PrintEvent>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -39,6 +41,8 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
         builder.Properties<AuditAction>().HaveConversion<string>().HaveMaxLength(64);
         builder.Properties<Permission>().HaveConversion<string>().HaveMaxLength(64);
         builder.Properties<MetadataSource>().HaveConversion<string>().HaveMaxLength(64);
+        builder.Properties<CopyType>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<DistributionStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureRole>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureRequestStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureMeaning>().HaveConversion<string>().HaveMaxLength(32);
