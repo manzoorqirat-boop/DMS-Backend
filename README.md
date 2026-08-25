@@ -62,6 +62,39 @@ the draft, which is what makes the content hash recorded against each signature 
 Signatures are append-only through the same three layers as the audit trail: no mutators, the
 `SaveChanges` guard, and database triggers.
 
+## Tests
+
+`tests/Dms.Domain.Tests` — xUnit, covering the Domain layer only. Not yet in the solution:
+
+```bash
+dotnet sln add tests/Dms.Domain.Tests/Dms.Domain.Tests.csproj
+dotnet test
+```
+
+Domain-only because that's where the logic worth testing lives without a database. The pure
+services — validator, writer, verifier, number pattern, watermark, password hasher — were
+written I/O-free precisely so this project needs no Postgres, no blob store and no document
+server.
+
+**`.docx` fixtures are generated in code** (`TestDocx.cs`), not committed as binaries. A
+binary fixture is opaque: nobody can see from a diff why a test broke, and "fix the fixture"
+means opening Word and hoping. Built in code, each test states which structure it depends on,
+and the "protection removed" case differs from the passing one by a single visible argument.
+
+The set that matters most is `DocxMetadataRoundTripTests`. `DocxMetadataWriter` stamps metadata
+in and `DocxProtectionVerifier` later checks it hasn't changed — **nothing else in the system
+verifies those two agree**, and if they diverge by so much as a trimmed space, every save of an
+untouched document is rejected as tampering. It covers the split-run case specifically, since
+Word routinely splits one logical value across several runs after an edit.
+
+### Not covered
+
+Application services, repositories, EF mappings and endpoints have no tests. The partial
+unique indexes that carry several invariants — one active template per type, one current
+revision per family, one active editing session per document — are **database** behaviour and
+can only be proven against a real Postgres. That wants an integration project with
+Testcontainers, which doesn't exist yet.
+
 ## Authentication & authorization
 
 JWT bearer tokens. `POST /api/auth/login` returns one; every other endpoint requires it.
@@ -494,8 +527,8 @@ dotnet run --project src/Dms.Api
 - **Template blobs are on local disk.** `ITemplateFileStore` is the seam; the disk
   implementation needs a mounted persistent volume, or replacement with an object store,
   before it's anything other than a dev store.
-- **No tests.** `DocxTemplateValidator` is pure and I/O-free specifically so it can be
-  covered against a folder of good and bad sample `.docx` files without a database.
+- **No integration tests.** Domain logic is covered; the database-enforced invariants and
+  every application service are not.
 - **Mail transport** — see the warning above. The queue, dedupe and run evidence are real;
   delivery is not.
 - **Reminders go to the document author**, since there's no department-owner concept yet. The
