@@ -1,3 +1,4 @@
+using Dms.Application.Common;
 using Dms.Application.Distribution;
 
 namespace Dms.Api.Endpoints;
@@ -29,8 +30,10 @@ public static class DistributionEndpoints
         documents.MapGet("/{id:guid}/print-history", async (
             DistributionService service,
             Guid id,
+            int? page,
+            int? pageSize,
             CancellationToken ct) =>
-            (await service.ListPrintHistoryAsync(id, ct)).ToHttpResult());
+            (await service.ListPrintHistoryAsync(id, new PagedRequest(page, pageSize), ct)).ToHttpResult());
 
         var copies = app.MapGroup("/api/copies").WithTags("Distribution");
 
@@ -86,7 +89,9 @@ public static class DistributionEndpoints
         reports.MapGet("/pending-retrieval", async (
             DistributionService service,
             Guid? siteId,
+            int? page,
+            int? pageSize,
             CancellationToken ct) =>
-            Results.Ok(await service.ListPendingRetrievalAsync(siteId, ct)));
+            Results.Ok(await service.ListPendingRetrievalAsync(siteId, new PagedRequest(page, pageSize), ct)));
     }
 }
