@@ -67,11 +67,13 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
     public Task<ControlledDocument?> GetAsync(Guid id, CancellationToken cancellationToken) =>
         db.ControlledDocuments.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
-    public async Task<IReadOnlyList<ControlledDocument>> ListAsync(
+    public async Task<PagedResult<ControlledDocument>> ListAsync(
         Guid? siteId,
         Guid? departmentId,
         Guid? documentTypeId,
         bool currentRevisionsOnly,
+        string? search,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
         var query = db.ControlledDocuments.AsQueryable();
@@ -122,9 +124,10 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
                     || x.Status == DocumentStatus.Approved),
             cancellationToken);
 
-    public async Task<IReadOnlyList<ControlledDocument>> ListDueForDispositionAsync(
+    public async Task<PagedResult<ControlledDocument>> ListDueForDispositionAsync(
         DateOnly asOf,
         Guid? siteId,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
         var query = db.ControlledDocuments
@@ -138,13 +141,14 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
             query = query.Where(x => x.SiteId == site);
         }
 
-        return await query.OrderBy(x => x.RetainUntil).ToListAsync(cancellationToken);
+        return await query.OrderBy(x => x.RetainUntil).ToPagedResultAsync(paging, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<ControlledDocument>> ListDueForReviewAsync(
+    public async Task<PagedResult<ControlledDocument>> ListDueForReviewAsync(
         DateOnly dueBy,
         Guid? siteId,
         Guid? departmentId,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
         // Only Effective documents. A superseded or obsolete version has nothing to review,
@@ -164,7 +168,7 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
             query = query.Where(x => x.DepartmentId == department);
         }
 
-        return await query.OrderBy(x => x.NextReviewDate).ToListAsync(cancellationToken);
+        return await query.OrderBy(x => x.NextReviewDate).ToPagedResultAsync(paging, cancellationToken);
     }
 
     public void Add(ControlledDocument document) => db.ControlledDocuments.Add(document);
@@ -282,8 +286,8 @@ public sealed class DistributionRepository(DmsDbContext db) : IDistributionRepos
         return highest ?? 0;
     }
 
-    public async Task<IReadOnlyList<(DocumentDistribution Copy, ControlledDocument Document)>>
-        ListPendingRetrievalAsync(Guid? siteId, CancellationToken cancellationToken)
+    public async Task<PagedResult<(DocumentDistribution Copy, ControlledDocument Document)>>
+        ListPendingRetrievalAsync(Guid? siteId, PagedRequest paging, CancellationToken cancellationToken)
     {
         // Joined to document status rather than maintaining a flag on the distribution: a
         // supersession then can't leave stale outstanding-copy state behind, because there is
@@ -301,12 +305,12 @@ public sealed class DistributionRepository(DmsDbContext db) : IDistributionRepos
             query = query.Where(x => x.document.SiteId == site);
         }
 
-        var rows = await query
+        var page = await query
             .OrderBy(x => x.document.DocumentNumber)
             .ThenBy(x => x.copy.CopyNumber)
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
 
-        return rows.Select(x => (x.copy, x.document)).ToList();
+        return page.Map(x => (x.copy, x.document));
     }
 
     public async Task<IReadOnlyList<DocumentDistribution>> ListUnacknowledgedBeforeAsync(
@@ -324,14 +328,15 @@ public sealed class DistributionRepository(DmsDbContext db) : IDistributionRepos
 
     public void AddPrintEvent(PrintEvent printEvent) => db.PrintEvents.Add(printEvent);
 
-    public async Task<IReadOnlyList<PrintEvent>> ListPrintEventsAsync(
+    public async Task<PagedResult<PrintEvent>> ListPrintEventsAsync(
         Guid documentId,
+        PagedRequest paging,
         CancellationToken cancellationToken) =>
         await db.PrintEvents
             .AsNoTracking()
             .Where(x => x.DocumentId == documentId)
             .OrderByDescending(x => x.PrintedAt)
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
 
     public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
         SaveChangesTranslator.SaveAsync(db, cancellationToken);
