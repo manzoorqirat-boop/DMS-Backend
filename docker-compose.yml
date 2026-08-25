@@ -1,0 +1,68 @@
+# Local stack: API, Postgres, and the OnlyOffice Document Server the in-browser editor needs.
+# Development convenience only — not a deployment topology. In particular the document server
+# here is unauthenticated and the secrets are placeholders.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: dms
+      POSTGRES_USER: dms_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_only}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dms_app -d dms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  documentserver:
+    image: onlyoffice/documentserver:latest
+    environment:
+      # Development only. In any real deployment this must be enabled and the secret shared
+      # with the API, or anyone who can reach the server can open any document.
+      JWT_ENABLED: "false"
+    ports:
+      - "8081:80"
+    volumes:
+      - onlyoffice-data:/var/www/onlyoffice/Data
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=dms;Username=dms_app;Password=${POSTGRES_PASSWORD:-dev_only};SSL Mode=Disable"
+
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:-dev-only-signing-key-not-for-production-use}
+
+      # First-run administrator. Remove once a real account exists.
+      Bootstrap__AdminUserName: ${ADMIN_USER:-admin}
+      Bootstrap__AdminPassword: ${ADMIN_PASSWORD:-ChangeMeOnFirstRun!}
+
+      # CallbackBaseUrl is the API as the DOCUMENT SERVER sees it — the compose network name,
+      # not localhost. Getting this wrong produces an editor that renders and silently never
+      # saves.
+      DocumentServer__Url: "http://localhost:8081"
+      DocumentServer__CallbackBaseUrl: "http://api:8080"
+      DocumentServer__TokenSecret: ${EDITOR_TOKEN_SECRET:-dev-only-editor-token-secret-32-chars}
+
+      Cors__AllowedOrigins__0: "http://localhost:5173"
+
+      # Off by default even locally: notifications go to a log, not a mailbox, so a running
+      # sweep mostly produces noise until a real transport exists.
+      Scheduler__Enabled: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - api-storage:/app/storage
+
+volumes:
+  postgres-data:
+  onlyoffice-data:
+  api-storage:
