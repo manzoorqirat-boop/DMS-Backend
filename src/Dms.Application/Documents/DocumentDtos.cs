@@ -30,6 +30,8 @@ public sealed record DocumentSummary(
     bool IsEditable,
     string Author,
     DateOnly? EffectiveDate,
+    DateOnly? NextReviewDate,
+    string? ObsoleteReason,
     DateTimeOffset CreatedAt)
 {
     public static DocumentSummary From(ControlledDocument document) => new(
@@ -48,6 +50,8 @@ public sealed record DocumentSummary(
         document.IsEditable,
         document.Author,
         document.EffectiveDate,
+        document.NextReviewDate,
+        document.ObsoleteReason,
         document.CreatedAt);
 }
 
