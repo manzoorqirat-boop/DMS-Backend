@@ -32,6 +32,9 @@ public sealed record DocumentSummary(
     DateOnly? EffectiveDate,
     DateOnly? NextReviewDate,
     string? ObsoleteReason,
+    DateOnly? RetainUntil,
+    DispositionAction? Disposition,
+    bool IsContentDestroyed,
     DateTimeOffset CreatedAt)
 {
     public static DocumentSummary From(ControlledDocument document) => new(
@@ -52,6 +55,9 @@ public sealed record DocumentSummary(
         document.EffectiveDate,
         document.NextReviewDate,
         document.ObsoleteReason,
+        document.RetainUntil,
+        document.Disposition,
+        document.ContentDestroyedAt is not null,
         document.CreatedAt);
 }
 
