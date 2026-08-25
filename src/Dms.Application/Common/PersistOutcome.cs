@@ -12,11 +12,18 @@ namespace Dms.Application.Common;
 /// which references Domain and nothing else.
 /// </para>
 /// </summary>
-public sealed record PersistOutcome(bool Saved, string? ViolatedConstraint)
+public sealed record PersistOutcome(bool Saved, string? ViolatedConstraint, bool IsConcurrencyConflict = false)
 {
     public static readonly PersistOutcome Success = new(true, null);
 
     public static PersistOutcome UniqueViolation(string? constraintName) => new(false, constraintName);
+
+    /// <summary>
+    /// Someone else changed the row between it being read and saved. Distinct from a unique
+    /// violation because the caller's message differs: "reload, someone else edited this" is
+    /// actionable, "that value is taken" is not.
+    /// </summary>
+    public static readonly PersistOutcome ConcurrencyConflict = new(false, null, true);
 
     /// <summary>
     /// Case-insensitive substring match — Postgres reports the index name, and callers care
