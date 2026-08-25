@@ -290,6 +290,17 @@ public sealed class DistributionRepository(DmsDbContext db) : IDistributionRepos
         return rows.Select(x => (x.copy, x.document)).ToList();
     }
 
+    public async Task<IReadOnlyList<DocumentDistribution>> ListUnacknowledgedBeforeAsync(
+        DateTimeOffset issuedBefore,
+        CancellationToken cancellationToken) =>
+        await db.DocumentDistributions
+            .AsNoTracking()
+            .Where(x => x.Status == DistributionStatus.Issued
+                && x.CopyType != CopyType.Uncontrolled
+                && x.CreatedAt < issuedBefore)
+            .OrderBy(x => x.CreatedAt)
+            .ToListAsync(cancellationToken);
+
     public void Add(DocumentDistribution distribution) => db.DocumentDistributions.Add(distribution);
 
     public void AddPrintEvent(PrintEvent printEvent) => db.PrintEvents.Add(printEvent);
