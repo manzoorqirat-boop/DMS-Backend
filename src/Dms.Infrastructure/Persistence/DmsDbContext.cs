@@ -27,6 +27,7 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     public DbSet<WorkflowStepDefinition> WorkflowStepDefinitions => Set<WorkflowStepDefinition>();
     public DbSet<MetadataFieldDefinition> MetadataFieldDefinitions => Set<MetadataFieldDefinition>();
     public DbSet<ReviewPolicy> ReviewPolicies => Set<ReviewPolicy>();
+    public DbSet<RetentionPolicy> RetentionPolicies => Set<RetentionPolicy>();
     public DbSet<DocumentDistribution> DocumentDistributions => Set<DocumentDistribution>();
     public DbSet<PrintEvent> PrintEvents => Set<PrintEvent>();
     public DbSet<Notification> Notifications => Set<Notification>();
@@ -48,6 +49,8 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
         builder.Properties<NotificationKind>().HaveConversion<string>().HaveMaxLength(48);
         builder.Properties<NotificationStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<JobRunStatus>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<RetentionTrigger>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<DispositionAction>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureRole>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureRequestStatus>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<SignatureMeaning>().HaveConversion<string>().HaveMaxLength(32);
