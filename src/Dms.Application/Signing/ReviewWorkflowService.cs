@@ -1,4 +1,5 @@
 using Dms.Application.Abstractions;
+using Dms.Application.Documents;
 using Dms.Application.Workflows;
 using Dms.Application.Common;
 using Dms.Domain.Entities;
@@ -27,6 +28,7 @@ public sealed class ReviewWorkflowService(
     IUnitOfWork unitOfWork,
     ISigningPolicy policy,
     WorkflowDefinitionService workflows,
+    DocumentLifecycleService lifecycle,
     IAuditTrail audit,
     ICurrentUser currentUser)
 {
@@ -443,9 +445,14 @@ public sealed class ReviewWorkflowService(
         // current revisions, or none, would leave "which version do I follow" unanswerable.
         var predecessor = await documents.GetCurrentRevisionAsync(document.FamilyId, cancellationToken);
 
+        // Computed from the type's review policy at the moment of issuance, so a later policy
+        // change doesn't silently move the due date of something already in force.
+        var nextReviewDate = await lifecycle.ResolveNextReviewDateAsync(
+            document.DocumentTypeId, document.SiteId, effectiveDate, cancellationToken);
+
         try
         {
-            document.MakeEffective(effectiveDate, DateOnly.FromDateTime(DateTime.UtcNow));
+            document.MakeEffective(effectiveDate, DateOnly.FromDateTime(DateTime.UtcNow), nextReviewDate);
 
             if (predecessor is not null && predecessor.Id != document.Id)
             {
@@ -462,7 +469,8 @@ public sealed class ReviewWorkflowService(
 
         audit.Record(
             AuditAction.DocumentMadeEffective, EntityType, document.Id, document.DocumentNumber,
-            $"Rev {document.Revision:00} effective {effectiveDate:yyyy-MM-dd}.");
+            $"Rev {document.Revision:00} effective {effectiveDate:yyyy-MM-dd}."
+            + (nextReviewDate is { } due ? $" Next review due {due:yyyy-MM-dd}." : " No review policy applies."));
 
         if (predecessor is not null && predecessor.Id != document.Id)
         {
