@@ -1,6 +1,5 @@
 using Dms.Application.Abstractions;
 using Dms.Application.Common;
-using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 
 namespace Dms.Application.Auth;
@@ -110,59 +109,6 @@ public sealed class AuthService(
             user.FullName,
             user.Department,
             user.Designation));
-    }
-
-    /// <summary>
-    /// Changes the caller's own password.
-    /// <para>
-    /// Requires the current password even though the caller is already authenticated. The
-    /// password is also the signing credential, so an unattended session must not be enough to
-    /// take over someone's ability to sign.
-    /// </para>
-    /// </summary>
-    public async Task<Result<bool>> ChangeOwnPasswordAsync(
-        string userName,
-        ChangePasswordRequest request,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(userName))
-        {
-            return Error.Validation("actor_unknown", "The acting user could not be determined.");
-        }
-
-        var user = await users.GetByUserNameAsync(userName, cancellationToken);
-        if (user is null)
-        {
-            return Error.NotFound("user_not_found", "The acting user has no DMS account.");
-        }
-
-        if (!user.VerifyPassword(request.CurrentPassword))
-        {
-            audit.Record(
-                AuditAction.UserLoginFailed, EntityType, user.Id, user.UserName,
-                "Password change rejected: current password incorrect.");
-            await users.SaveChangesAsync(cancellationToken);
-
-            return Error.Validation("current_password_incorrect", "The current password is incorrect.");
-        }
-
-        try
-        {
-            user.ChangePassword(request.NewPassword);
-        }
-        catch (ArgumentException ex)
-        {
-            return Error.Validation("password_invalid", ex.Message);
-        }
-
-        audit.Record(
-            AuditAction.UserPasswordChanged, EntityType, user.Id, user.UserName,
-            "Password changed by the account holder.");
-
-        var saved = await users.SaveChangesAsync(cancellationToken);
-        return saved.Saved
-            ? Result<bool>.Success(true)
-            : Error.Conflict("password_save_conflict", "The password could not be changed.");
     }
 
     private static Error InvalidCredentials() =>
