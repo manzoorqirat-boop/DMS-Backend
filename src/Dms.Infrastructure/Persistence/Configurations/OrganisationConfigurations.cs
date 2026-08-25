@@ -89,16 +89,37 @@ public class ControlledDocumentConfiguration : IEntityTypeConfiguration<Controll
         // pin rather than a dangling id.
         builder.HasOne<DocumentTemplate>().WithMany().HasForeignKey(x => x.TemplateId).OnDelete(DeleteBehavior.Restrict);
 
-        builder.HasIndex(x => x.DocumentNumber)
+        // Number plus revision, not number alone: every revision of a controlled document
+        // keeps the same number, and that is the point of a document number.
+        builder.HasIndex(x => new { x.DocumentNumber, x.Revision })
             .IsUnique()
-            .HasDatabaseName("ux_controlled_documents_number");
+            .HasDatabaseName("ux_controlled_documents_number_revision");
 
-        // URS Functions #1 — title uniqueness is scoped per document type. Enforced here
-        // rather than only in the service, since two concurrent creations would otherwise
-        // both pass a service-side existence check.
+        // One row per revision within a lineage.
+        builder.HasIndex(x => new { x.FamilyId, x.Revision })
+            .IsUnique()
+            .HasDatabaseName("ux_controlled_documents_family_revision");
+
+        // At most one current revision per lineage. Partial index, same pattern as the active
+        // template and active workflow: issuing a successor stands the predecessor down and
+        // promotes the successor in one transaction, but read-then-write across two concurrent
+        // issuances isn't atomic and this is what makes the loser fail loudly.
+        builder.HasIndex(x => x.FamilyId)
+            .IsUnique()
+            .HasFilter("is_current_revision = true")
+            .HasDatabaseName("ux_controlled_documents_one_current_per_family");
+
+        // URS Functions #1 — title uniqueness scoped per document type, but only across
+        // *current* revisions. A superseded Rev 00 and a live Rev 01 legitimately share a
+        // title; without the filter, the first revision of anything would collide with its own
+        // predecessor and the revision cycle simply wouldn't work.
         builder.HasIndex(x => new { x.DocumentTypeId, x.Title })
             .IsUnique()
-            .HasDatabaseName("ux_controlled_documents_type_title");
+            .HasFilter("is_current_revision = true")
+            .HasDatabaseName("ux_controlled_documents_type_title_current");
+
+        builder.HasIndex(x => x.IsCurrentRevision)
+            .HasDatabaseName("ix_controlled_documents_current");
 
         builder.HasIndex(x => new { x.DepartmentId, x.Status })
             .HasDatabaseName("ix_controlled_documents_department_status");
