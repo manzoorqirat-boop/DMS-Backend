@@ -32,7 +32,7 @@ technically writable by an UPDATE or DELETE statement, which defeats the entire 
 being append-only. Commit the migration (including this edit) to source control; Railway
 builds from what's committed, not from your local working copy.
 
-## Step 1 — create the Railway project and database
+## Step 1 — create the Railway project, database, and volume
 
 1. Create a new Railway project from this repository.
 2. Add a **PostgreSQL** plugin to the project. Railway provisions it and — once you link the
@@ -42,6 +42,14 @@ builds from what's committed, not from your local working copy.
 3. Railway should detect `railway.json` at the repo root and build from the Dockerfile
    automatically. If it doesn't, set the build method to Dockerfile explicitly in the
    service's settings.
+4. **Add a Railway Volume to the API service, mounted at `/app/storage`.** This is
+   configured in Railway's own dashboard (the service's Volumes tab), not in the Dockerfile —
+   Railway's builder rejects the Docker `VOLUME` instruction outright (`"docker VOLUME ... is
+   not supported, use Railway Volumes"`), which is why the Dockerfile only creates the
+   directory and doesn't declare it. `/app/storage` is already the directory the Dockerfile
+   creates and hands to the non-root `dms` user, so mounting there needs no further
+   permission changes. Skip this step and every uploaded template and every working document
+   is gone on the next deploy.
 
 ## Step 2 — environment variables
 
@@ -54,6 +62,8 @@ that side automatically).
 | `Bootstrap__AdminUserName` | Yes, for first login | Only takes effect while the user table is empty. |
 | `Bootstrap__AdminPassword` | Yes, for first login | Same. **Remove both `Bootstrap__*` variables once you've logged in and changed the password** — `BootstrapSeeder` logs a warning to that effect on every startup they're still set. |
 | `Deploy__RunMigrationsOnStartup` | For first deploy only | See Step 3. Set to `true` for the first deploy, then back to `false` (or unset). |
+| `TemplateStorage__RootPath` | **Yes** | Set to `/app/storage/templates` — a subdirectory under the Railway Volume mounted in Step 1. |
+| `DocumentStorage__RootPath` | **Yes** | Set to `/app/storage/documents`, same volume. |
 | `OpenApi__Enabled` | Recommended: `true` initially | Defaults to on only in the `Development` environment, which Railway doesn't set by default — so Swagger is off unless you turn it on. Useful for verifying the deployment; consider turning it back off once a frontend is the only real consumer, since an unauthenticated map of every endpoint is a reconnaissance aid on a regulated system. |
 | `Cors__AllowedOrigins__0` | Once a frontend exists | The frontend's deployed origin (e.g. `https://your-app.vercel.app`). Leave unset for a backend-only deploy — CORS only matters for browser-based cross-origin calls, and Swagger served from the API's own origin doesn't need it. |
 | `DocumentServer__Url` | No | Leave unset. This deployment doesn't include OnlyOffice Document Server — in-browser editing stays disabled until that's stood up separately (it's a heavier, stateful service that deserves its own Railway service or its own decision to host elsewhere). |
