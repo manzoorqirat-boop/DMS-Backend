@@ -52,7 +52,10 @@ public interface ITemplateRepository
     /// </summary>
     Task<int> GetHighestVersionAsync(Guid documentTypeId, CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<DocumentTemplate>> ListAsync(Guid? documentTypeId, CancellationToken cancellationToken);
+    Task<PagedResult<DocumentTemplate>> ListAsync(
+        Guid? documentTypeId,
+        PagedRequest paging,
+        CancellationToken cancellationToken);
 
     void Add(DocumentTemplate template);
 
