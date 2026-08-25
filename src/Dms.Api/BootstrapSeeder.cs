@@ -100,11 +100,80 @@ public static class BootstrapSeeder
             $"{admin.UserName} → {AdminRoleCode}", admin.UserName,
             "Granted every permission at organisation-wide scope by the first-run bootstrap."));
 
+        SeedDefaultNotificationRules(db, admin.UserName);
+
         await db.SaveChangesAsync(cancellationToken);
 
         logger.LogWarning(
             "Bootstrap administrator '{UserName}' created. Change this password immediately and "
             + "remove {PasswordKey} from configuration.",
             admin.UserName, PasswordKey);
+    }
+
+    /// <summary>
+    /// Seeds a starting set of notification rules.
+    /// <para>
+    /// Seeded as <b>data</b> rather than left as code defaults, deliberately. The sweep fires
+    /// nothing for a kind with no rule, so without this a fresh system is silent — but the
+    /// alternative of hardcoding fallbacks would put the wording, timing and recipients back in
+    /// the codebase where no administrator can reach them. These rows are ordinary
+    /// configuration from the moment they exist: editable, disableable, and visible in the UI.
+    /// </para>
+    /// <para>
+    /// Recipients default to the document author because a fresh system has no roles beyond
+    /// the bootstrap administrator, so there is nobody else to point at yet. Repointing these
+    /// at the right role holders is the first thing to configure after creating them.
+    /// </para>
+    /// </summary>
+    private static void SeedDefaultNotificationRules(DmsDbContext db, string createdBy)
+    {
+        var defaults = new (NotificationKind Kind, int Lead, int Repeat, string Subject, string Body)[]
+        {
+            (NotificationKind.ReviewComingDue, 30, 0,
+                "Review due in {DaysUntilDue} day(s): {DocumentNumber}",
+                "{DocumentNumber} Rev {Revision} — \"{Title}\" ({Department}) is due for periodic "
+                + "review on {DueDate}. Record a review, or start a revision if changes are needed."),
+
+            // Repeats daily: an overdue controlled document should keep arriving until someone
+            // acts, unlike the coming-due warning which would become noise.
+            (NotificationKind.ReviewOverdue, 0, 1,
+                "OVERDUE for review: {DocumentNumber}",
+                "{DocumentNumber} Rev {Revision} — \"{Title}\" was due for review on {DueDate}, "
+                + "{DaysOverdue} day(s) ago. It remains effective and in use until reviewed or revised."),
+
+            (NotificationKind.SignaturePending, 2, 3,
+                "Signature required: {DocumentNumber}",
+                "{DocumentNumber} Rev {Revision} — \"{Title}\" is waiting on your signature at "
+                + "step {StepOrder} ({StepLabel})."),
+
+            (NotificationKind.CopyUnacknowledged, 7, 7,
+                "Copy {CopyNumber} not acknowledged: {DocumentNumber}",
+                "{CopyType} copy {CopyNumber} of {DocumentNumber} was issued to {IssuedTo} on "
+                + "{IssuedOn} and has not been acknowledged."),
+
+            (NotificationKind.CopyRetrievalRequired, 0, 7,
+                "Retrieve copy {CopyNumber}: {DocumentNumber}",
+                "{DocumentNumber} Rev {Revision} is {Status}, but {CopyType} copy {CopyNumber} is "
+                + "still held by {IssuedTo}. Collect it, or record it as destroyed or lost."),
+
+            (NotificationKind.DispositionDue, 0, 30,
+                "Retention expired: {DocumentNumber}",
+                "{DocumentNumber} Rev {Revision} was retained until {RetainUntil}, {DaysOverdue} "
+                + "day(s) ago, and awaits a disposition decision. Nothing is destroyed automatically."),
+        };
+
+        foreach (var (kind, lead, repeat, subject, body) in defaults)
+        {
+            db.NotificationRules.Add(new NotificationRule(
+                kind,
+                documentTypeId: null,
+                NotificationRecipientMode.DocumentAuthor,
+                recipientRoleId: null,
+                lead,
+                repeat,
+                subject,
+                body,
+                createdBy));
+        }
     }
 }
