@@ -2,6 +2,7 @@ using Dms.Application.Abstractions;
 using Dms.Application.DocumentTypes;
 using Dms.Application.Distribution;
 using Dms.Application.Documents;
+using Dms.Application.Editing;
 using Dms.Application.Notifications;
 using Dms.Application.Access;
 using Dms.Application.Metadata;
@@ -11,6 +12,7 @@ using Dms.Application.Workflows;
 using Dms.Application.Templates;
 using Dms.Infrastructure.Persistence;
 using Dms.Infrastructure.Persistence.Repositories;
+using Dms.Infrastructure.Editing;
 using Dms.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -65,6 +67,8 @@ public static class DependencyInjection
         services.AddScoped<IMetadataFieldRepository, MetadataFieldRepository>();
         services.AddScoped<IReviewPolicyRepository, ReviewPolicyRepository>();
         services.AddScoped<IRetentionPolicyRepository, RetentionPolicyRepository>();
+        services.AddScoped<IEditingSessionRepository, EditingSessionRepository>();
+        services.AddSingleton<IEditorSettings, EditorSettings>();
         services.AddScoped<IDistributionRepository, DistributionRepository>();
         services.AddScoped<INotificationRepository, NotificationRepository>();
         services.AddScoped<IJobRunRepository, JobRunRepository>();
@@ -118,6 +122,18 @@ public static class DependencyInjection
         services.AddScoped<DocumentRevisionService>();
         services.AddScoped<DocumentLifecycleService>();
         services.AddScoped<RetentionService>();
+        services.AddScoped<EditingService>();
+
+        // Token service and HTTP fetcher are only registered when a document server is
+        // configured. HmacEditorTokenService throws on a missing secret by design, and that
+        // must not break every deployment that isn't using in-browser editing yet.
+        if (!string.IsNullOrWhiteSpace(configuration[EditorConfig.UrlKey]))
+        {
+            services.AddSingleton<IEditorTokenService, HmacEditorTokenService>();
+            services.AddHttpClient(HttpEditorContentFetcher.ClientName,
+                client => client.Timeout = TimeSpan.FromMinutes(2));
+            services.AddScoped<IEditorContentFetcher, HttpEditorContentFetcher>();
+        }
         services.AddScoped<DistributionService>();
         services.AddScoped<NotificationService>();
         services.AddScoped<ReminderJob>();
