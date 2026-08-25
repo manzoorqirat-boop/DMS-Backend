@@ -62,6 +62,44 @@ the draft, which is what makes the content hash recorded against each signature 
 Signatures are append-only through the same three layers as the audit trail: no mutators, the
 `SaveChanges` guard, and database triggers.
 
+## Distribution & controlled printing
+
+`DocumentDistribution` records every issued copy — number, holder, type, print limit and
+whether it has come back. `PrintEvent` is the itemised, append-only record behind the running
+print count.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET`/`POST` | `/api/documents/{id}/copies` | List / issue numbered copies |
+| `POST` | `/api/copies/{id}/acknowledge` | Recipient confirms receipt |
+| `POST` | `/api/copies/{id}/retrieve` | Copy physically collected back |
+| `POST` | `/api/copies/{id}/close-out` | Destroyed or Lost, note required |
+| `POST` | `/api/copies/{id}/print` | Enforces the limit, records the event, returns the copy |
+| `GET` | `/api/documents/{id}/print-history` | Every print of every copy |
+| `GET` | `/api/reports/pending-retrieval` | Copies still out for superseded/obsolete documents |
+
+Only an **Effective** document can be distributed — putting a draft into someone's hands is
+the distribution failure that actually causes harm on a shop floor. Copy numbers are unique
+per document and never reused, since a retrieval checklist ticks against them.
+
+A `Controlled` or `External` copy **must** carry a print limit; only `Uncontrolled` may be
+unlimited. A controlled copy reprintable without limit isn't a controlled copy.
+
+**Refused prints are audited**, not just rejected. Someone repeatedly hitting a limit is a
+signal — either the limit is wrong or copies are going somewhere they shouldn't — and it's
+only visible if refusals are recorded.
+
+`Lost` is a distinct outcome from `Destroyed` on purpose. An unaccounted controlled copy is a
+finding and has to read as one rather than quietly balancing the count.
+
+> ### ⚠ Printing is not yet watermarked
+> `PassThroughPrintRenderer` returns files **unstamped** and reports
+> `IsWatermarked = false`, surfaced in the `X-Copy-Watermarked` response header and in every
+> audit entry. Stamping pages and flattening to PDF needs a document converter — the same
+> dependency the editor integration will bring. **Replace this before any real controlled copy
+> is printed:** an unstamped page is indistinguishable from an uncontrolled printout the
+> moment it leaves the tray.
+
 ## Periodic review & obsolescence
 
 `ReviewPolicy` sets the review interval per document type, with an optional per-site override
@@ -319,8 +357,8 @@ dotnet run --project src/Dms.Api
   returned but not yet acted on automatically.
 - **No retention scheduling.** Obsolete documents are retained indefinitely; nothing tracks a
   retention period or flags records eligible for destruction.
-- **Distribution, controlled printing and retrieval are unbuilt** — watermarked copies, print
-  counts, and issued-copy reconciliation are all still ahead.
+- **Watermark rendering** — see the warning above. The control layer is complete; the
+  stamping is not.
 - **Four-digit sequence ceiling** — 9,999 documents per site/department/type before numbers
   grow a fifth digit and stop sorting lexically. Pinned in `DocumentNumberFormat` rather than
   left configurable, since changing it mid-life would make old and new numbers inconsistent.
