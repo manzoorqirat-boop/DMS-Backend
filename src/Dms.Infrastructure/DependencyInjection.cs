@@ -2,6 +2,7 @@ using Dms.Application.Abstractions;
 using Dms.Application.DocumentTypes;
 using Dms.Application.Distribution;
 using Dms.Application.Documents;
+using Dms.Application.Notifications;
 using Dms.Application.Access;
 using Dms.Application.Metadata;
 using Dms.Application.Numbering;
@@ -64,6 +65,12 @@ public static class DependencyInjection
         services.AddScoped<IMetadataFieldRepository, MetadataFieldRepository>();
         services.AddScoped<IReviewPolicyRepository, ReviewPolicyRepository>();
         services.AddScoped<IDistributionRepository, DistributionRepository>();
+        services.AddScoped<INotificationRepository, NotificationRepository>();
+        services.AddScoped<IJobRunRepository, JobRunRepository>();
+        services.AddSingleton<IClock, SystemClock>();
+
+        // Stand-in: logs instead of mailing. Replace before go-live — see LoggingNotificationSender.
+        services.AddScoped<INotificationSender, LoggingNotificationSender>();
 
         // Stand-in: returns files unstamped and says so. Replace before any real controlled
         // copy is printed — see PassThroughPrintRenderer.
@@ -110,6 +117,8 @@ public static class DependencyInjection
         services.AddScoped<DocumentRevisionService>();
         services.AddScoped<DocumentLifecycleService>();
         services.AddScoped<DistributionService>();
+        services.AddScoped<NotificationService>();
+        services.AddScoped<ReminderJob>();
 
         return services;
     }
