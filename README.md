@@ -62,6 +62,34 @@ the draft, which is what makes the content hash recorded against each signature 
 Signatures are append-only through the same three layers as the audit trail: no mutators, the
 `SaveChanges` guard, and database triggers.
 
+## Periodic review & obsolescence
+
+`ReviewPolicy` sets the review interval per document type, with an optional per-site override
+— same most-specific-wins resolution as numbering rules and workflows. `NextReviewDate` is
+computed **at issuance** from the policy then in force, so a later policy change doesn't
+silently move the due date of something already effective.
+
+The interval drives a **due date, not an automatic status change**. A document doesn't stop
+being effective because its review date passed — withdrawing a procedure people are following,
+without anyone deciding to, would be worse than the overdue review it was meant to prevent.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/api/reports/review-due?withinDays=90` | Pre-intimation report; overdue items included regardless of window and sorted first |
+| `POST` | `/api/documents/{id}/periodic-review` | Record a review concluding no change needed; extends the due date |
+| `POST` | `/api/documents/{id}/obsolete` | Withdraw from use, reason required |
+| `GET`/`POST`/`PUT` | `/api/review-policies` | Policy master data |
+
+Two behaviours worth knowing: the extended due date is measured from **today**, not from the
+old due date, so a review completed six months late doesn't immediately fall due again. And
+obsoleting the current revision clears `IsCurrentRevision`, leaving the family with none —
+correct and honest, since there is no procedure in force for it any more.
+
+**Open decision:** in most pharma DMS implementations a review concluding "no change required"
+is a *signed* QA act, not a recorded note. This records it with an attributable actor, an
+outcome and an audit entry. If your customers expect a signature, it should route through the
+signature engine instead — flagged in `DocumentLifecycleService` rather than guessed at.
+
 ## Revision cycle
 
 A revision is a **new record** sharing the predecessor's document number and lineage, not an
@@ -286,9 +314,11 @@ dotnet run --project src/Dms.Api
   before it's anything other than a dev store.
 - **No tests.** `DocxTemplateValidator` is pure and I/O-free specifically so it can be
   covered against a folder of good and bad sample `.docx` files without a database.
-- **Obsolescence is manual.** `MakeObsolete()` exists but no service calls it, so withdrawing
-  a document from use with no replacement is not yet an operation. Periodic-review triggers
-  and retention scheduling are unbuilt.
+- **No scheduler.** The review-due report exists but nothing runs it — there's no background
+  job emailing owners at the pre-intimation threshold. `PreIntimationDays` is stored and
+  returned but not yet acted on automatically.
+- **No retention scheduling.** Obsolete documents are retained indefinitely; nothing tracks a
+  retention period or flags records eligible for destruction.
 - **Distribution, controlled printing and retrieval are unbuilt** — watermarked copies, print
   counts, and issued-copy reconciliation are all still ahead.
 - **Four-digit sequence ceiling** — 9,999 documents per site/department/type before numbers
