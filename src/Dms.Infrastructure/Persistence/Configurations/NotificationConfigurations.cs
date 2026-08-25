@@ -55,3 +55,31 @@ public class ScheduledJobRunConfiguration : IEntityTypeConfiguration<ScheduledJo
             .HasDatabaseName("ix_scheduled_job_runs_job_started");
     }
 }
+
+public class NotificationRuleConfiguration : IEntityTypeConfiguration<NotificationRule>
+{
+    public void Configure(EntityTypeBuilder<NotificationRule> builder)
+    {
+        builder.ToTable("notification_rules");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).ValueGeneratedNever();
+
+        builder.Property(x => x.SubjectTemplate).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.BodyTemplate).HasMaxLength(4000).IsRequired();
+        builder.Property(x => x.CreatedBy).HasMaxLength(128).IsRequired();
+
+        builder.HasOne<DocumentType>().WithMany().HasForeignKey(x => x.DocumentTypeId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne<Role>().WithMany().HasForeignKey(x => x.RecipientRoleId).OnDelete(DeleteBehavior.Restrict);
+
+        // One rule per (kind, document type), with the catch-all stored as a NULL type. NULLS
+        // NOT DISTINCT, or a kind could accumulate several conflicting catch-alls and
+        // resolution would depend on insertion order.
+        builder.HasIndex(x => new { x.Kind, x.DocumentTypeId })
+            .IsUnique()
+            .AreNullsDistinct(false)
+            .HasDatabaseName("ux_notification_rules_scope");
+
+        builder.HasIndex(x => new { x.Kind, x.IsEnabled })
+            .HasDatabaseName("ix_notification_rules_kind_enabled");
+    }
+}
