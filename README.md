@@ -550,6 +550,12 @@ On in Development, off elsewhere unless `OpenApi:Enabled` is set. A public, unau
 of every endpoint in a regulated system is a reconnaissance aid, so enabling it in a validated
 environment should be a deliberate act rather than an inherited default.
 
+## Deploying
+
+See [`RAILWAY_DEPLOY.md`](./RAILWAY_DEPLOY.md) for the ordered path to a Railway deployment —
+including a migration step that has to happen locally before anything else, which is the one
+most likely to trip you up if skipped.
+
 ## Before first build
 
 Nothing in this repository has been compiled. There was no .NET SDK or NuGet access in the
