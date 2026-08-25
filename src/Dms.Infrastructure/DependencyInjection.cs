@@ -64,6 +64,7 @@ public static class DependencyInjection
         services.AddScoped<IWorkflowDefinitionRepository, WorkflowDefinitionRepository>();
         services.AddScoped<IMetadataFieldRepository, MetadataFieldRepository>();
         services.AddScoped<IReviewPolicyRepository, ReviewPolicyRepository>();
+        services.AddScoped<IRetentionPolicyRepository, RetentionPolicyRepository>();
         services.AddScoped<IDistributionRepository, DistributionRepository>();
         services.AddScoped<INotificationRepository, NotificationRepository>();
         services.AddScoped<IJobRunRepository, JobRunRepository>();
@@ -116,6 +117,7 @@ public static class DependencyInjection
         services.AddScoped<MetadataFieldService>();
         services.AddScoped<DocumentRevisionService>();
         services.AddScoped<DocumentLifecycleService>();
+        services.AddScoped<RetentionService>();
         services.AddScoped<DistributionService>();
         services.AddScoped<NotificationService>();
         services.AddScoped<ReminderJob>();
