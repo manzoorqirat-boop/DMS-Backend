@@ -14,7 +14,7 @@ public class PolicyAndSigningTests
     {
         // The clock on "is this still correct" starts when people begin following the
         // document, not when it was drafted or approved.
-        var policy = new ReviewPolicy(Guid.CreateVersion7(), null, 24, 60, "admin");
+        var policy = new ReviewPolicy(Guid.CreateVersion7(), null, 24, "admin");
 
         Assert.Equal(new DateOnly(2028, 8, 25), policy.DueDateFrom(Today));
     }
@@ -26,16 +26,7 @@ public class PolicyAndSigningTests
     public void Review_interval_outside_the_permitted_range_is_rejected(int months)
     {
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new ReviewPolicy(Guid.CreateVersion7(), null, months, 30, "admin"));
-    }
-
-    [Fact]
-    public void Pre_intimation_longer_than_the_interval_is_rejected()
-    {
-        // A document that starts warning before its own review period began would be
-        // permanently "coming due", which trains people to ignore the report.
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new ReviewPolicy(Guid.CreateVersion7(), null, 1, 400, "admin"));
+            new ReviewPolicy(Guid.CreateVersion7(), null, months, "admin"));
     }
 
     [Fact]
