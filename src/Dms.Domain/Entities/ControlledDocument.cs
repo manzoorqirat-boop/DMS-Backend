@@ -43,6 +43,12 @@ public class ControlledDocument : Entity, ITimestamped
         Author = RequireNonEmpty(author, nameof(author));
         Revision = 0;
         Status = DocumentStatus.Draft;
+
+        // A new document founds its own lineage. Revisions inherit this id, which is what
+        // makes "every version of this SOP" a single indexed query rather than a string match
+        // on document numbers.
+        FamilyId = Id;
+        IsCurrentRevision = true;
         CreatedAt = DateTimeOffset.UtcNow;
     }
 
@@ -64,12 +70,50 @@ public class ControlledDocument : Entity, ITimestamped
     /// <summary>0 for first issue. Incremented only when a revision cycle completes.</summary>
     public int Revision { get; private set; }
 
+    /// <summary>
+    /// Identifies the lineage this document belongs to — every revision of the same controlled
+    /// document shares it. Revision 0 uses its own <see cref="Entity.Id"/>.
+    /// </summary>
+    public Guid FamilyId { get; private set; }
+
+    /// <summary>
+    /// Whether this is the revision currently in force, or the latest one if none is yet.
+    /// <para>
+    /// Exactly one row per family carries this. It's what the master list filters on, and what
+    /// title uniqueness is enforced against — a superseded Rev 00 and a live Rev 01 share a
+    /// title, and only the live one should collide with anything.
+    /// </para>
+    /// <para>
+    /// Set false on a draft revision while its predecessor is still in force: the old version
+    /// remains the current one until the new one is actually issued, which is exactly what a
+    /// user asking "which SOP do I follow today" needs to be told.
+    /// </para>
+    /// </summary>
+    public bool IsCurrentRevision { get; private set; }
+
     public DocumentStatus Status { get; private set; } = DocumentStatus.Draft;
 
     public string Author { get; private set; } = "";
 
     /// <summary>Set when the document becomes effective. Null while it's still in draft or review.</summary>
     public DateOnly? EffectiveDate { get; private set; }
+
+    /// <summary>
+    /// Frozen copy of the content as it stood when the last approver signed. Separate key from
+    /// <see cref="WorkingCopyKey"/> so the approved artefact is immutable regardless of what
+    /// happens to the working copy afterwards.
+    /// </summary>
+    public string? ApprovedCopyKey { get; private set; }
+
+    /// <summary>
+    /// SHA-256 of the approved content. 21 CFR Part 11 §11.70 requires signatures to be linked
+    /// to their records such that they can't be excised and transplanted onto another record;
+    /// every signature stores this same hash, so a substituted file no longer matches what was
+    /// signed.
+    /// </summary>
+    public string? ApprovedContentHash { get; private set; }
+
+    public DateTimeOffset? SubmittedAt { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset? UpdatedAt { get; private set; }
@@ -109,6 +153,172 @@ public class ControlledDocument : Entity, ITimestamped
         }
 
         Status = DocumentStatus.Withdrawn;
+        Touch();
+    }
+
+    /// <summary>
+    /// Locks the draft and starts the signature route. From here the author can no longer edit
+    /// — <see cref="IsEditable"/> goes false — which is what makes the content hash recorded
+    /// against each signature meaningful.
+    /// </summary>
+    public void SubmitForReview()
+    {
+        if (Status != DocumentStatus.Draft)
+        {
+            throw new InvalidOperationException(
+                $"Cannot submit {DocumentNumber}: status is {Status}, not {DocumentStatus.Draft}.");
+        }
+
+        SubmittedAt = DateTimeOffset.UtcNow;
+        Status = DocumentStatus.InReview;
+        Touch();
+    }
+
+    /// <summary>
+    /// A reviewer rejected it. Returns to Draft and editable. Signatures already collected on
+    /// the route are not deleted — they are a record of what those people saw and decided, and
+    /// the route is superseded rather than erased.
+    /// </summary>
+    public void ReturnForRework()
+    {
+        if (Status != DocumentStatus.InReview)
+        {
+            throw new InvalidOperationException(
+                $"Cannot return {DocumentNumber} for rework: status is {Status}, not {DocumentStatus.InReview}.");
+        }
+
+        Status = DocumentStatus.Draft;
+        Touch();
+    }
+
+    /// <summary>
+    /// Every step on the route has been signed. Approved is not yet in force; issuance is a
+    /// separate, dated act.
+    /// </summary>
+    public void MarkApproved(string approvedCopyKey, string approvedContentHash)
+    {
+        if (Status != DocumentStatus.InReview)
+        {
+            throw new InvalidOperationException(
+                $"Cannot approve {DocumentNumber}: status is {Status}, not {DocumentStatus.InReview}.");
+        }
+
+        ApprovedCopyKey = RequireNonEmpty(approvedCopyKey, nameof(approvedCopyKey));
+        ApprovedContentHash = RequireNonEmpty(approvedContentHash, nameof(approvedContentHash));
+        Status = DocumentStatus.Approved;
+        Touch();
+    }
+
+    /// <summary>
+    /// Brings the document into force on a given date.
+    /// <para>
+    /// A future date is allowed and is the normal case — training and distribution have to
+    /// happen before an SOP takes effect. A past date is not: backdating when something came
+    /// into force is precisely the kind of record an inspector treats as a finding.
+    /// </para>
+    /// </summary>
+    public void MakeEffective(DateOnly effectiveDate, DateOnly today)
+    {
+        if (Status != DocumentStatus.Approved)
+        {
+            throw new InvalidOperationException(
+                $"Cannot issue {DocumentNumber}: status is {Status}, not {DocumentStatus.Approved}.");
+        }
+
+        if (effectiveDate < today)
+        {
+            throw new InvalidOperationException(
+                $"Effective date {effectiveDate:O} is in the past; a document cannot be backdated into force.");
+        }
+
+        EffectiveDate = effectiveDate;
+        Status = DocumentStatus.Effective;
+        Touch();
+    }
+
+    /// <summary>Replaced by a later revision that is now in force.</summary>
+    public void Supersede()
+    {
+        if (Status != DocumentStatus.Effective)
+        {
+            throw new InvalidOperationException(
+                $"Cannot supersede {DocumentNumber}: status is {Status}, not {DocumentStatus.Effective}.");
+        }
+
+        Status = DocumentStatus.Superseded;
+        Touch();
+    }
+
+    /// <summary>
+    /// Withdrawn from use with no replacement. Retained, not deleted — the retention clock
+    /// starts here rather than the record disappearing.
+    /// </summary>
+    public void MakeObsolete()
+    {
+        if (Status is not (DocumentStatus.Effective or DocumentStatus.Superseded))
+        {
+            throw new InvalidOperationException(
+                $"Cannot obsolete {DocumentNumber}: status is {Status}.");
+        }
+
+        Status = DocumentStatus.Obsolete;
+        Touch();
+    }
+
+    /// <summary>
+    /// Starts the next revision as a separate record, keeping the same document number and
+    /// lineage.
+    /// <para>
+    /// A new row rather than mutating this one, deliberately. The effective version's content,
+    /// its signatures and the hash binding them stay intact and retrievable — a revision that
+    /// overwrote its predecessor would destroy the record of what was actually in force last
+    /// year, which is the single thing a retrospective investigation most needs.
+    /// </para>
+    /// <para>
+    /// The new revision is <b>not</b> current until it is issued. Until then this document
+    /// remains the one in force.
+    /// </para>
+    /// </summary>
+    public ControlledDocument BeginRevision(string workingCopyKey, string author)
+    {
+        if (Status != DocumentStatus.Effective)
+        {
+            throw new InvalidOperationException(
+                $"Cannot revise {DocumentNumber}: status is {Status}, not {DocumentStatus.Effective}. "
+                + "Only the version currently in force can be revised.");
+        }
+
+        return new ControlledDocument(
+            DocumentNumber,
+            Title,
+            SiteId,
+            DepartmentId,
+            DocumentTypeId,
+            TemplateId,
+            workingCopyKey,
+            author)
+        {
+            Revision = Revision + 1,
+            FamilyId = FamilyId,
+            IsCurrentRevision = false,
+        };
+    }
+
+    /// <summary>
+    /// Marks this revision as the one in force. Called when it is issued, after its
+    /// predecessor has been superseded — the two happen in one transaction so the family is
+    /// never left with two current revisions or none.
+    /// </summary>
+    public void PromoteToCurrent()
+    {
+        IsCurrentRevision = true;
+        Touch();
+    }
+
+    /// <summary>Steps aside for a successor that has just taken effect.</summary>
+    public void StandDown()
+    {
+        IsCurrentRevision = false;
         Touch();
     }
 
