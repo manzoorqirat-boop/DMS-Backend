@@ -62,6 +62,33 @@ the draft, which is what makes the content hash recorded against each signature 
 Signatures are append-only through the same three layers as the audit trail: no mutators, the
 `SaveChanges` guard, and database triggers.
 
+## Retention & disposition
+
+`RetentionPolicy` sets how long records of a type are kept after leaving active use, and from
+which event the clock runs — `Superseded` or `Obsolete`. The clock starts automatically at
+supersession and at obsolescence, from the policy in force at that moment.
+
+**Nothing is ever destroyed on a timer.** Expiry makes a record *eligible* and puts it on a
+worklist; a person with `DocumentObsolete` records a decision, and only that decision deletes
+anything. A system that quietly destroyed regulated records on a schedule would be
+indefensible the first time someone asked who authorised it.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/api/reports/disposition-due` | Expired retention, no decision yet |
+| `POST` | `/api/documents/{id}/disposition` | Record the decision and carry it out |
+| `GET`/`POST`/`PUT` | `/api/retention-policies` | Policy master data |
+
+`DestroyContent` deletes the stored file. **The register row, its signatures and its audit
+trail are kept** — a retention period permits destroying the document, not the evidence that
+it existed, said what it said, and was properly approved. `RetainPermanently` marks records
+that outlive any schedule so they leave the worklist.
+
+Two ordering choices: the audit and register state commit *before* the blob is deleted, since
+a leftover file with a correct record beats a destroyed file with no record of who authorised
+it. And a policy change never recalculates records already counting down — bringing a batch of
+records forward for destruction is the one direction that must never happen by accident.
+
 ## Reminders & scheduling
 
 `ReminderJob` sweeps daily for four things: reviews coming due, reviews overdue, signatures
@@ -394,8 +421,9 @@ dotnet run --project src/Dms.Api
   author is the closest attributable person but often isn't who should be chased.
 - **`PreIntimationDays` is stored but not yet read by the sweep**, which uses a fixed 30-day
   window. Wiring the per-type value in is a small change to `ReminderJob`.
-- **No retention scheduling.** Obsolete documents are retained indefinitely; nothing tracks a
-  retention period or flags records eligible for destruction.
+- **Disposition isn't on the reminder sweep.** `ReminderJob` doesn't yet queue notifications
+  for records sitting on the disposition worklist, so it has to be checked rather than
+  arriving.
 - **Watermark rendering** — see the warning above. The control layer is complete; the
   stamping is not.
 - **Four-digit sequence ceiling** — 9,999 documents per site/department/type before numbers
