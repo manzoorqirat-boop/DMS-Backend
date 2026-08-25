@@ -1,6 +1,7 @@
 using System.Text;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
+using Dms.Infrastructure.Persistence.Configurations;
 using Microsoft.EntityFrameworkCore;
 
 namespace Dms.Infrastructure.Persistence;
@@ -120,6 +121,8 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     {
         modelBuilder.HasDefaultSchema(Schema);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(DmsDbContext).Assembly);
+
+        modelBuilder.ApplyConcurrencyTokens();
 
         ApplySnakeCaseNaming(modelBuilder);
 
