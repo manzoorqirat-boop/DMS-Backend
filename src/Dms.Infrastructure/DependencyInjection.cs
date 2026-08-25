@@ -1,5 +1,6 @@
 using Dms.Application.Abstractions;
 using Dms.Application.DocumentTypes;
+using Dms.Application.Distribution;
 using Dms.Application.Documents;
 using Dms.Application.Access;
 using Dms.Application.Metadata;
@@ -62,6 +63,11 @@ public static class DependencyInjection
         services.AddScoped<IWorkflowDefinitionRepository, WorkflowDefinitionRepository>();
         services.AddScoped<IMetadataFieldRepository, MetadataFieldRepository>();
         services.AddScoped<IReviewPolicyRepository, ReviewPolicyRepository>();
+        services.AddScoped<IDistributionRepository, DistributionRepository>();
+
+        // Stand-in: returns files unstamped and says so. Replace before any real controlled
+        // copy is printed — see PassThroughPrintRenderer.
+        services.AddSingleton<IControlledPrintRenderer, PassThroughPrintRenderer>();
 
         var maxAttempts = int.TryParse(configuration[$"{SigningPolicy.SectionName}:MaxFailedAttempts"], out var parsed)
             ? parsed
@@ -103,6 +109,7 @@ public static class DependencyInjection
         services.AddScoped<MetadataFieldService>();
         services.AddScoped<DocumentRevisionService>();
         services.AddScoped<DocumentLifecycleService>();
+        services.AddScoped<DistributionService>();
 
         return services;
     }
