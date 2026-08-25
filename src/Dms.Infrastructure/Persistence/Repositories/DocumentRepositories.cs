@@ -122,6 +122,32 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
                     || x.Status == DocumentStatus.Approved),
             cancellationToken);
 
+    public async Task<IReadOnlyList<ControlledDocument>> ListDueForReviewAsync(
+        DateOnly dueBy,
+        Guid? siteId,
+        Guid? departmentId,
+        CancellationToken cancellationToken)
+    {
+        // Only Effective documents. A superseded or obsolete version has nothing to review,
+        // and including them would bury the items that actually need action.
+        var query = db.ControlledDocuments
+            .Where(x => x.Status == DocumentStatus.Effective
+                && x.NextReviewDate != null
+                && x.NextReviewDate <= dueBy);
+
+        if (siteId is { } site)
+        {
+            query = query.Where(x => x.SiteId == site);
+        }
+
+        if (departmentId is { } department)
+        {
+            query = query.Where(x => x.DepartmentId == department);
+        }
+
+        return await query.OrderBy(x => x.NextReviewDate).ToListAsync(cancellationToken);
+    }
+
     public void Add(ControlledDocument document) => db.ControlledDocuments.Add(document);
 
     public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
