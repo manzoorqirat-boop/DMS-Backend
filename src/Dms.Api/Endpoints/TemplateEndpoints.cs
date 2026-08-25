@@ -1,3 +1,4 @@
+using Dms.Application.Common;
 using Dms.Application.DocumentTypes;
 using Dms.Application.Templates;
 
@@ -50,8 +51,10 @@ public static class TemplateEndpoints
         group.MapGet("/", async (
             TemplateRegistrationService service,
             Guid? documentTypeId,
+            int? page,
+            int? pageSize,
             CancellationToken ct) =>
-            Results.Ok(await service.ListAsync(documentTypeId, ct)));
+            Results.Ok(await service.ListAsync(documentTypeId, new PagedRequest(page, pageSize), ct)));
 
         group.MapGet("/{id:guid}", async (
             TemplateRegistrationService service,
