@@ -51,6 +51,25 @@ public interface IControlledDocumentRepository
         Guid? siteId,
         Guid? departmentId,
         Guid? documentTypeId,
+        bool currentRevisionsOnly,
+        CancellationToken cancellationToken);
+
+    /// <summary>Every revision of one document, oldest first.</summary>
+    Task<IReadOnlyList<ControlledDocument>> ListFamilyAsync(
+        Guid familyId,
+        CancellationToken cancellationToken);
+
+    /// <summary>The revision currently in force, or the latest if none is yet.</summary>
+    Task<ControlledDocument?> GetCurrentRevisionAsync(
+        Guid familyId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Any revision of a lineage that is still working its way through draft or review. Used
+    /// to stop a second revision being opened while one is already in flight.
+    /// </summary>
+    Task<ControlledDocument?> GetInFlightRevisionAsync(
+        Guid familyId,
         CancellationToken cancellationToken);
 
     void Add(ControlledDocument document);
