@@ -33,7 +33,12 @@ public static class EditingEndpoints
         // user session. The signed, expiring token in the path is the only credential it can
         // present — see HmacEditorTokenService. Mounted under /api/public/ so a gateway can
         // route them without the normal authentication.
-        var public_ = app.MapGroup("/api/public/editor").WithTags("Editing (document server)");
+        // AllowAnonymous is load-bearing here: the fallback authorization policy denies
+        // everything by default, and the document server is a separate process with no user
+        // session. The signed, expiring token in the path is its only credential.
+        var public_ = app.MapGroup("/api/public/editor")
+            .WithTags("Editing (document server)")
+            .AllowAnonymous();
 
         public_.MapGet("/{token}/file", async (
             EditingService service,
