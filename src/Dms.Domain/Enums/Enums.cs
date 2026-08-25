@@ -153,6 +153,10 @@ public enum AuditAction
     CopyClosedOut,
     CopyPrinted,
     CopyPrintRefused,
+
+    // Scheduled jobs and notifications
+    ScheduledJobRan,
+    NotificationQueued,
 }
 
 /// <summary>Why a person is on a signature route.</summary>
@@ -342,4 +346,47 @@ public enum DistributionStatus
     /// <summary>Could not be accounted for. Deliberately a distinct outcome, not folded into
     /// Destroyed — an unaccounted controlled copy is a finding and must read as one.</summary>
     Lost,
+}
+
+/// <summary>Why a notification was raised. Also the dedupe dimension for scheduled reminders.</summary>
+public enum NotificationKind
+{
+    /// <summary>A document is approaching its periodic-review due date.</summary>
+    ReviewComingDue,
+
+    /// <summary>A document's review date has passed.</summary>
+    ReviewOverdue,
+
+    /// <summary>A signature step is waiting on this user.</summary>
+    SignaturePending,
+
+    /// <summary>A controlled copy has been issued but not acknowledged.</summary>
+    CopyUnacknowledged,
+
+    /// <summary>Copies are still in circulation for a document no longer current.</summary>
+    CopyRetrievalRequired,
+}
+
+public enum NotificationStatus
+{
+    /// <summary>Queued, not yet handed to a sender.</summary>
+    Pending,
+
+    Sent,
+
+    /// <summary>
+    /// Delivery failed. Kept rather than retried indefinitely — a notification nobody received
+    /// should be visible as such, not silently absent.
+    /// </summary>
+    Failed,
+}
+
+public enum JobRunStatus
+{
+    Succeeded,
+
+    /// <summary>Ran to completion but something within it failed. The detail says what.</summary>
+    CompletedWithErrors,
+
+    Failed,
 }
