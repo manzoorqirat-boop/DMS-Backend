@@ -7,17 +7,29 @@ using Dms.Application.Abstractions;
 using Dms.Application.Auth;
 using Dms.Application.Templates;
 using Dms.Infrastructure;
-using Dms.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddDmsOpenApi();
+builder.Services.AddDmsRateLimiting(builder.Configuration);
+
+// A named client for outbound health probes, kept separate from the document-server fetch
+// client so a probe timeout can't be confused with a save failure.
+builder.Services.AddHttpClient("health");
+
+builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseHealthCheck>("database")
+    .AddCheck<BlobStoreHealthCheck>("blob-store")
+    .AddCheck<DocumentServerHealthCheck>("document-server");
 
 builder.Services.AddHostedService<DailyReminderService>();
 builder.Services.AddHttpContextAccessor();
@@ -84,6 +96,10 @@ builder.Services.Configure<FormOptions>(options =>
 
 var app = builder.Build();
 
+// First in the pipeline: an exception thrown by anything downstream, including
+// authentication, has to reach this rather than surfacing as an empty 500.
+app.UseExceptionHandler();
+
 app.UseStatusCodePages();
 app.UseDmsOpenApi();
 
@@ -91,6 +107,8 @@ if (corsOrigins.Length > 0)
 {
     app.UseCors();
 }
+
+app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -106,12 +124,31 @@ await BootstrapSeeder.SeedAsync(
 // requires one fails for the wrong reason during an outage.
 app.MapGet("/health/live", () => Results.Ok(new { status = "live" })).AllowAnonymous();
 
-app.MapGet("/health/ready", async (DmsDbContext db, CancellationToken ct) =>
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
-    var canConnect = await db.Database.CanConnectAsync(ct);
-    return canConnect
-        ? Results.Ok(new { status = "ready" })
-        : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    // Degraded still passes readiness. The document server being down means editing fails, not
+    // that this instance should be pulled out of the load balancer.
+    ResultStatusCodes =
+    {
+        [HealthStatus.Healthy] = StatusCodes.Status200OK,
+        [HealthStatus.Degraded] = StatusCodes.Status200OK,
+        [HealthStatus.Unhealthy] = StatusCodes.Status503ServiceUnavailable,
+    },
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+
+        await context.Response.WriteAsJsonAsync(new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.Select(e => new
+            {
+                name = e.Key,
+                status = e.Value.Status.ToString(),
+                description = e.Value.Description,
+            }),
+        });
+    },
 }).AllowAnonymous();
 
 app.MapAuthEndpoints();
@@ -131,5 +168,6 @@ app.MapNotificationEndpoints();
 app.MapEditingEndpoints();
 app.MapReviewEndpoints();
 app.MapAuditEndpoints();
+app.MapExportEndpoints();
 
 app.Run();
