@@ -104,8 +104,7 @@ public static class LifecycleEndpoints
             Guid id,
             UpdateReviewPolicyRequest request,
             CancellationToken ct) =>
-            (await service.UpdatePolicyAsync(id, request.ReviewIntervalMonths, request.PreIntimationDays, ct))
-                .ToHttpResult());
+            (await service.UpdatePolicyAsync(id, request.ReviewIntervalMonths, ct)).ToHttpResult());
     }
 }
 
@@ -113,4 +112,4 @@ public sealed record PeriodicReviewRequest(string Outcome);
 
 public sealed record ObsoleteRequest(string Reason);
 
-public sealed record UpdateReviewPolicyRequest(int ReviewIntervalMonths, int PreIntimationDays);
+public sealed record UpdateReviewPolicyRequest(int ReviewIntervalMonths);
