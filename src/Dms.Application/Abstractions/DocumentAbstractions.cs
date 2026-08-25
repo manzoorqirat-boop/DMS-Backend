@@ -168,6 +168,14 @@ public interface IDistributionRepository
         Guid? siteId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Controlled copies issued before a cutoff and still not acknowledged — the chase list.
+    /// Uncontrolled copies are excluded: nobody acknowledges an information-only printout.
+    /// </summary>
+    Task<IReadOnlyList<DocumentDistribution>> ListUnacknowledgedBeforeAsync(
+        DateTimeOffset issuedBefore,
+        CancellationToken cancellationToken);
+
     void Add(DocumentDistribution distribution);
 
     void AddPrintEvent(PrintEvent printEvent);
