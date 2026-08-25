@@ -16,6 +16,16 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Railway (and Render, Heroku-style platforms generally) assigns a container an arbitrary
+// port at runtime via the PORT environment variable and routes traffic to it — the
+// Dockerfile's own ASPNETCORE_URLS=http://+:8080 is only a sensible default for local/Compose
+// use, where nothing sets PORT. Binding to it explicitly here means this works correctly on
+// Railway without depending on a platform-specific override of ASPNETCORE_URLS elsewhere.
+if (Environment.GetEnvironmentVariable("PORT") is { Length: > 0 } port)
+{
+    builder.WebHost.UseUrls($"http://+:{port}");
+}
+
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
@@ -112,6 +122,14 @@ app.UseRateLimiter();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Off by default — see StartupMigrator for why an unconditional auto-migrate on every boot
+// is the wrong default for anything beyond a single-instance deployment like Railway's.
+// Must run before BootstrapSeeder: seeding writes rows, which needs the schema to exist first.
+await StartupMigrator.RunIfEnabledAsync(
+    app.Services,
+    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(StartupMigrator)),
+    CancellationToken.None);
 
 // Before serving traffic: without a seeded administrator on a fresh database, nobody can log
 // in and no endpoint would let them, because authorisation denies by default.
