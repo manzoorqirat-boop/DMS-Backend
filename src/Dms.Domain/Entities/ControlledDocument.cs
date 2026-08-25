@@ -115,6 +115,20 @@ public class ControlledDocument : Entity, ITimestamped
 
     public DateTimeOffset? SubmittedAt { get; private set; }
 
+    /// <summary>
+    /// When this document must next be re-reviewed. Set at issuance from the type's review
+    /// policy, and pushed forward each time a periodic review concludes no change is needed.
+    /// Null when no policy applies — some document types genuinely never expire.
+    /// </summary>
+    public DateOnly? NextReviewDate { get; private set; }
+
+    public DateTimeOffset? LastReviewedAt { get; private set; }
+
+    public string? LastReviewedBy { get; private set; }
+
+    /// <summary>Why the document was withdrawn from use. Required when obsoleting.</summary>
+    public string? ObsoleteReason { get; private set; }
+
     public DateTimeOffset CreatedAt { get; private set; }
     public DateTimeOffset? UpdatedAt { get; private set; }
 
@@ -217,7 +231,7 @@ public class ControlledDocument : Entity, ITimestamped
     /// into force is precisely the kind of record an inspector treats as a finding.
     /// </para>
     /// </summary>
-    public void MakeEffective(DateOnly effectiveDate, DateOnly today)
+    public void MakeEffective(DateOnly effectiveDate, DateOnly today, DateOnly? nextReviewDate = null)
     {
         if (Status != DocumentStatus.Approved)
         {
@@ -232,7 +246,33 @@ public class ControlledDocument : Entity, ITimestamped
         }
 
         EffectiveDate = effectiveDate;
+        NextReviewDate = nextReviewDate;
         Status = DocumentStatus.Effective;
+        Touch();
+    }
+
+    /// <summary>
+    /// Records that a periodic review happened and the document was found still correct,
+    /// pushing the due date out by another interval.
+    /// <para>
+    /// Only meaningful for a document actually in force. Reviewing a superseded version is a
+    /// contradiction — the thing to review is whatever replaced it.
+    /// </para>
+    /// </summary>
+    public void RecordPeriodicReview(DateOnly nextReviewDate, string reviewedBy)
+    {
+        if (Status != DocumentStatus.Effective)
+        {
+            throw new InvalidOperationException(
+                $"Cannot record a periodic review for {DocumentNumber}: status is {Status}, "
+                + $"not {DocumentStatus.Effective}.");
+        }
+
+        NextReviewDate = nextReviewDate;
+        LastReviewedAt = DateTimeOffset.UtcNow;
+        LastReviewedBy = string.IsNullOrWhiteSpace(reviewedBy)
+            ? throw new ArgumentException("Reviews must be attributable.", nameof(reviewedBy))
+            : reviewedBy;
         Touch();
     }
 
@@ -253,7 +293,7 @@ public class ControlledDocument : Entity, ITimestamped
     /// Withdrawn from use with no replacement. Retained, not deleted — the retention clock
     /// starts here rather than the record disappearing.
     /// </summary>
-    public void MakeObsolete()
+    public void MakeObsolete(string reason)
     {
         if (Status is not (DocumentStatus.Effective or DocumentStatus.Superseded))
         {
@@ -261,6 +301,13 @@ public class ControlledDocument : Entity, ITimestamped
                 $"Cannot obsolete {DocumentNumber}: status is {Status}.");
         }
 
+        ObsoleteReason = string.IsNullOrWhiteSpace(reason)
+            ? throw new ArgumentException("A reason is required to withdraw a document from use.", nameof(reason))
+            : reason.Trim();
+
+        // The review clock stops. Leaving a due date on a withdrawn document would keep it
+        // surfacing in the overdue report forever, which is how real overdue items get lost.
+        NextReviewDate = null;
         Status = DocumentStatus.Obsolete;
         Touch();
     }
