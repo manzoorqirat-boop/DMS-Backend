@@ -15,5 +15,3 @@ public sealed record LoginResult(
     string FullName,
     string Department,
     string Designation);
-
-public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
