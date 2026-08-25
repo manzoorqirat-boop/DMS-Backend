@@ -54,6 +54,7 @@ app.MapMetadataEndpoints();
 app.MapLifecycleEndpoints();
 app.MapDistributionEndpoints();
 app.MapNotificationEndpoints();
+app.MapEditingEndpoints();
 app.MapReviewEndpoints();
 app.MapAuditEndpoints();
 
