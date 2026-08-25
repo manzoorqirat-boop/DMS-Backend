@@ -25,17 +25,31 @@ internal static class SaveChangesTranslator
             await db.SaveChangesAsync(cancellationToken);
             return PersistOutcome.Success;
         }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Someone else changed the row since it was read. The entities are detached for the
+            // same reason as below, and the caller is told to reload rather than being allowed
+            // to silently overwrite a change it never saw.
+            Detach(db);
+            return PersistOutcome.ConcurrencyConflict;
+        }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: UniqueViolation } pg)
         {
-            // The failed entities stay tracked in a modified state after a rejected flush; a
-            // later save on the same scoped context would retry them. Detaching keeps the unit
-            // of work clean for whatever the caller does next.
-            foreach (var entry in db.ChangeTracker.Entries().ToList())
-            {
-                entry.State = EntityState.Detached;
-            }
-
+            Detach(db);
             return PersistOutcome.UniqueViolation(pg.ConstraintName);
+        }
+    }
+
+    /// <summary>
+    /// The failed entities stay tracked in a modified state after a rejected flush; a later
+    /// save on the same scoped context would retry them. Detaching keeps the unit of work clean
+    /// for whatever the caller does next.
+    /// </summary>
+    private static void Detach(DbContext db)
+    {
+        foreach (var entry in db.ChangeTracker.Entries().ToList())
+        {
+            entry.State = EntityState.Detached;
         }
     }
 }
@@ -87,8 +101,9 @@ public sealed class TemplateRepository(DmsDbContext db) : ITemplateRepository
         return highest ?? 0;
     }
 
-    public async Task<IReadOnlyList<DocumentTemplate>> ListAsync(
+    public async Task<PagedResult<DocumentTemplate>> ListAsync(
         Guid? documentTypeId,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
         var query = db.DocumentTemplates.AsQueryable();
@@ -101,7 +116,7 @@ public sealed class TemplateRepository(DmsDbContext db) : ITemplateRepository
         return await query
             .OrderBy(x => x.DocumentTypeId)
             .ThenByDescending(x => x.TemplateVersion)
-            .ToListAsync(cancellationToken);
+            .ToPagedResultAsync(paging, cancellationToken);
     }
 
     public void Add(DocumentTemplate template) => db.DocumentTemplates.Add(template);
