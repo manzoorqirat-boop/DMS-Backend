@@ -31,8 +31,9 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("Postgres")
-            ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
+        var connectionString = DatabaseConnectionStringResolver.Resolve(
+            Environment.GetEnvironmentVariable(DatabaseConnectionStringResolver.DatabaseUrlEnvironmentVariable),
+            configuration.GetConnectionString("Postgres"));
 
         services.AddDbContext<DmsDbContext>(options =>
         {
