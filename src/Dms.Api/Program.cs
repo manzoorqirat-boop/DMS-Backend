@@ -51,6 +51,7 @@ app.MapNumberingEndpoints();
 app.MapWorkflowEndpoints();
 app.MapMetadataEndpoints();
 app.MapLifecycleEndpoints();
+app.MapDistributionEndpoints();
 app.MapReviewEndpoints();
 app.MapAuditEndpoints();
 
