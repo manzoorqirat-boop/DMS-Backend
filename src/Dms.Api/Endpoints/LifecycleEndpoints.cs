@@ -39,6 +39,48 @@ public static class LifecycleEndpoints
             CancellationToken ct) =>
             Results.Ok(await service.ListDueForReviewAsync(withinDays ?? 90, siteId, departmentId, ct)));
 
+        // Records the decision taken when retention expired, and carries it out. For
+        // DestroyContent the stored file is deleted; the register row, its signatures and its
+        // audit trail are kept.
+        documents.MapPost("/{id:guid}/disposition", async (
+            RetentionService service,
+            Guid id,
+            RecordDispositionRequest request,
+            CancellationToken ct) =>
+            (await service.RecordDispositionAsync(id, request.Action, request.Note, ct)).ToHttpResult());
+
+        // Nothing acts on this automatically. Expiry makes a record eligible; a person decides.
+        reports.MapGet("/disposition-due", async (
+            RetentionService service,
+            Guid? siteId,
+            CancellationToken ct) =>
+            Results.Ok(await service.ListDueForDispositionAsync(siteId, ct)));
+
+        var retention = app.MapGroup("/api/retention-policies").WithTags("Retention Policies");
+
+        retention.MapGet("/", async (
+            RetentionService service,
+            Guid? documentTypeId,
+            CancellationToken ct) =>
+            Results.Ok(await service.ListPoliciesAsync(documentTypeId, ct)));
+
+        retention.MapPost("/", async (
+            RetentionService service,
+            CreateRetentionPolicyRequest request,
+            CancellationToken ct) =>
+        {
+            var result = await service.CreatePolicyAsync(request, ct);
+            return result.ToHttpResult(created =>
+                Results.Created($"/api/retention-policies/{created.Id}", created));
+        });
+
+        retention.MapPut("/{id:guid}", async (
+            RetentionService service,
+            Guid id,
+            UpdateRetentionPolicyRequest request,
+            CancellationToken ct) =>
+            (await service.UpdatePolicyAsync(id, request.RetentionYears, request.Trigger, ct)).ToHttpResult());
+
         var policies = app.MapGroup("/api/review-policies").WithTags("Review Policies");
 
         policies.MapGet("/", async (
