@@ -252,7 +252,6 @@ public sealed class DocumentLifecycleService(
                 request.DocumentTypeId,
                 request.SiteId,
                 request.ReviewIntervalMonths,
-                request.PreIntimationDays,
                 currentUser.UserName!);
         }
         catch (Exception ex) when (ex is ArgumentException or ArgumentOutOfRangeException)
@@ -263,7 +262,8 @@ public sealed class DocumentLifecycleService(
         policies.Add(policy);
         audit.Record(
             AuditAction.ReviewPolicyCreated, PolicyEntityType, policy.Id, documentType.Code,
-            $"Every {policy.ReviewIntervalMonths} months, warning {policy.PreIntimationDays} days ahead.");
+            $"Every {policy.ReviewIntervalMonths} months. "
+            + "Reminder lead time is configured separately, on the review notification rule.");
 
         var outcome = await policies.SaveChangesAsync(cancellationToken);
         if (!outcome.Saved)
@@ -286,7 +286,6 @@ public sealed class DocumentLifecycleService(
     public async Task<Result<ReviewPolicyView>> UpdatePolicyAsync(
         Guid policyId,
         int reviewIntervalMonths,
-        int preIntimationDays,
         CancellationToken cancellationToken)
     {
         var policy = await policies.GetAsync(policyId, cancellationToken);
@@ -305,7 +304,7 @@ public sealed class DocumentLifecycleService(
 
         try
         {
-            policy.Update(reviewIntervalMonths, preIntimationDays);
+            policy.Update(reviewIntervalMonths);
         }
         catch (ArgumentOutOfRangeException ex)
         {
