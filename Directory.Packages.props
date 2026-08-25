@@ -4,8 +4,8 @@
   </PropertyGroup>
   <!-- NOTE: versions below are the expected .NET 8 servicing line as of this writing. They
        were NOT restored/verified in the authoring environment (no NuGet access). Run
-       dotnet restore, then dotnet list package --outdated, and bump/pin from there —
-       same caveat ERES's own Directory.Packages.props carries. -->
+       dotnet restore, then list outdated packages and bump/pin from there — same caveat
+       ERES's own Directory.Packages.props carries. -->
   <ItemGroup>
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="8.0.10" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.10" />
@@ -15,7 +15,17 @@
     <PackageVersion Include="Microsoft.Extensions.Http" Version="8.0.1" />
     <!-- Bearer authentication. -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.10" />
-    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.0.2" />
+    <!-- Versioned independently of the ASP.NET Core / EF Core packages above, NOT on the same
+         8.0.x cadence — "8.0.2" was a guess that pattern-matched this package to the runtime's
+         own versioning scheme, which this package family doesn't actually follow, and is the
+         most likely reason a real restore resolved it down to an ancient, genuinely
+         vulnerable release instead (NU1902, GHSA-59j7-ghrg-fj52). Given as an open lower-bound
+         range rather than another unverified exact guess: list outdated packages once restore
+         succeeds, confirm the version it actually resolved to is not the one in that advisory,
+         and replace this with an exact pin at that version — an open range is the right
+         unblocking move right now, not the right long-term state for a system this codebase
+         otherwise pins exactly everywhere else. -->
+    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="[7.1.2,)" />
     <!-- API discovery, so a frontend team reads a spec rather than the source. -->
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.9.0" />
     <!-- Test-only. -->
