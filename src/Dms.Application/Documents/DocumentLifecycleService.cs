@@ -17,6 +17,7 @@ public sealed class DocumentLifecycleService(
     IReviewPolicyRepository policies,
     IDocumentTypeRepository documentTypes,
     IAccessControl access,
+    RetentionService retention,
     IAuditTrail audit,
     ICurrentUser currentUser)
 {
@@ -180,6 +181,9 @@ public sealed class DocumentLifecycleService(
         {
             return Error.Conflict("document_not_obsoletable", ex.Message);
         }
+
+        // Retention runs from the moment the record leaves active use.
+        await retention.StartRetentionAsync(document, RetentionTrigger.Obsolete, cancellationToken);
 
         audit.Record(
             AuditAction.DocumentObsoleted, EntityType, document.Id,
