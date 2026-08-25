@@ -62,6 +62,37 @@ the draft, which is what makes the content hash recorded against each signature 
 Signatures are append-only through the same three layers as the audit trail: no mutators, the
 `SaveChanges` guard, and database triggers.
 
+## Revision cycle
+
+A revision is a **new record** sharing the predecessor's document number and lineage, not an
+edit of it. `ControlledDocument` carries `FamilyId` (the lineage; Rev 00 uses its own id) and
+`IsCurrentRevision` (exactly one row per family).
+
+`POST /api/documents/{id}/revise` opens Rev *n+1* as a Draft from the version currently in
+force. It requires a stated reason, and refuses if a revision is already in flight.
+
+The new draft is built from the document type's **currently active template**, not a copy of
+the predecessor's file — a revision should pick up whatever the approved template now looks
+like rather than perpetuating a version that may since have been retired for a reason.
+
+Issuing a successor (`MakeEffectiveAsync`) supersedes the predecessor and transfers
+`IsCurrentRevision` in one flush, so a family is never left with two current revisions or
+none.
+
+Three indexes carry this:
+
+- `ux_controlled_documents_number_revision` — number plus revision, since every revision keeps
+  the same number.
+- `ux_controlled_documents_one_current_per_family` — partial, filtered on
+  `is_current_revision = true`.
+- `ux_controlled_documents_type_title_current` — title uniqueness now applies only across
+  *current* revisions. Without the filter, the first revision of anything would collide with
+  its own predecessor and the cycle simply wouldn't work.
+
+`GET /api/documents` defaults to `currentRevisionsOnly=true` — the master list, one row per
+document showing what's in force. Pass `false` for the full register.
+`GET /api/documents/{id}/revisions` returns a lineage's full history.
+
 ## Phase 4 — what it does
 
 Every state-changing operation records an `AuditEvent` in the **same transaction** as the
@@ -255,10 +286,11 @@ dotnet run --project src/Dms.Api
   before it's anything other than a dev store.
 - **No tests.** `DocxTemplateValidator` is pure and I/O-free specifically so it can be
   covered against a folder of good and bad sample `.docx` files without a database.
-- **Revision cycle is not built.** `Supersede()` and `MakeObsolete()` exist on
-  `ControlledDocument`, but nothing yet creates revision *n+1* from an effective document,
-  carries its number forward, or supersedes the predecessor when the successor takes effect.
-  That's the next lifecycle gap, and it's the one an inspector reaches fastest.
+- **Obsolescence is manual.** `MakeObsolete()` exists but no service calls it, so withdrawing
+  a document from use with no replacement is not yet an operation. Periodic-review triggers
+  and retention scheduling are unbuilt.
+- **Distribution, controlled printing and retrieval are unbuilt** — watermarked copies, print
+  counts, and issued-copy reconciliation are all still ahead.
 - **Four-digit sequence ceiling** — 9,999 documents per site/department/type before numbers
   grow a fifth digit and stop sorting lexically. Pinned in `DocumentNumberFormat` rather than
   left configurable, since changing it mid-life would make old and new numbers inconsistent.
