@@ -157,6 +157,13 @@ public enum AuditAction
     // Scheduled jobs and notifications
     ScheduledJobRan,
     NotificationQueued,
+
+    // Retention and disposition
+    RetentionPolicyCreated,
+    RetentionPolicyChanged,
+    RetentionClockStarted,
+    DocumentContentDestroyed,
+    DocumentRetainedPermanently,
 }
 
 /// <summary>Why a person is on a signature route.</summary>
@@ -389,4 +396,34 @@ public enum JobRunStatus
     CompletedWithErrors,
 
     Failed,
+}
+
+/// <summary>When a document's retention clock starts.</summary>
+public enum RetentionTrigger
+{
+    /// <summary>From the date the version was replaced by a successor.</summary>
+    Superseded,
+
+    /// <summary>From the date the document was withdrawn from use entirely.</summary>
+    Obsolete,
+}
+
+/// <summary>
+/// What happens to a record once its retention period expires. Always a decision someone
+/// records, never something the system performs on a timer — see <c>RetentionService</c>.
+/// </summary>
+public enum DispositionAction
+{
+    /// <summary>
+    /// The stored file is deleted. The register row, its signatures and its audit trail are
+    /// kept — destroying the metadata would destroy the evidence that the document ever
+    /// existed and was properly controlled, which is not what a retention period permits.
+    /// </summary>
+    DestroyContent,
+
+    /// <summary>
+    /// Kept indefinitely. Some records — validation master plans, product dossiers — outlive
+    /// any schedule and are marked so they stop appearing on the disposition worklist.
+    /// </summary>
+    RetainPermanently,
 }
