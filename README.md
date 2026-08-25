@@ -62,6 +62,44 @@ the draft, which is what makes the content hash recorded against each signature 
 Signatures are append-only through the same three layers as the audit trail: no mutators, the
 `SaveChanges` guard, and database triggers.
 
+## Authentication & authorization
+
+JWT bearer tokens. `POST /api/auth/login` returns one; every other endpoint requires it.
+
+**Authorization denies by default.** A fallback policy requires an authenticated user, and
+only four routes opt out: `/health/live`, `/health/ready`, `/api/auth/login`, and the two
+`/api/public/editor/*` routes the document server calls. The reverse arrangement — protect
+endpoints individually — means a new endpoint added later is public until someone remembers.
+
+**Tokens carry identity only** — no roles, no permissions. `IAccessControl` evaluates those
+live on every request, so revoking a role takes effect immediately instead of whenever the
+token happens to expire.
+
+**Login and signing are separate credentials.** Part 11 §11.200 requires it, so failed logins
+and failed signing attempts have separate counters and separate lockouts. Locking one does not
+lock the other — otherwise someone brute-forcing a password from outside could stop a signer
+already at their desk from completing an approval, turning an attempted intrusion into a
+denial of service against a regulated process. A token proves identity; it never proves intent
+to sign, and every signature re-authenticates with the password.
+
+`ClockSkew` is set to zero. The five-minute default means a revoked or expired session keeps
+working past the moment the records say it stopped.
+
+### First run
+
+Deny-by-default creates a chicken-and-egg: no user exists, so nobody can log in to create one.
+`BootstrapSeeder` runs at startup **only when the user table is empty** and creates an
+administrator plus a `SYSTEM_ADMIN` role holding every permission, from `Bootstrap:*` config.
+It is not an upsert and never touches an existing account, so leaving the config in place
+can't reset a real administrator's password later. With no bootstrap configured it logs a
+warning rather than seeding a default account with a known password.
+
+**Change that password and remove `Bootstrap:AdminPassword` after first run.**
+
+`Jwt:SigningKey` must be ≥32 characters; startup fails without it. CORS origins are configured
+per deployment, and an empty list disables CORS rather than falling back to something
+permissive.
+
 ## In-browser editing (check-in / check-out)
 
 Built against **OnlyOffice Document Server** — the plan doc's own recommendation — with the
@@ -448,12 +486,11 @@ dotnet run --project src/Dms.Api
 
 ## Known gaps
 
-- **No authentication.** `ICurrentUser` resolves from the authenticated principal, which
-  doesn't exist yet, so every write returns `400 actor_unknown` outside Development. That is
-  the deliberate default for a Part 11 system — no attributable identity, no record. A
-  development-only impersonation setting (`Development:ImpersonateUser`, gated on
-  `IHostEnvironment.IsDevelopment()`) exists so Phase 1 can be exercised meanwhile.
-- **No CORS.** Waiting on a decided frontend origin.
+- **No refresh tokens.** `Jwt:TokenMinutes` is therefore also how often a user is asked to log
+  in again — a real trade-off between exposure of a stolen token and interrupting someone
+  mid-task.
+- **No token revocation list.** A stolen token stays valid until it expires; deactivating the
+  user stops all permission checks passing but does not invalidate the token itself.
 - **Template blobs are on local disk.** `ITemplateFileStore` is the seam; the disk
   implementation needs a mounted persistent volume, or replacement with an object store,
   before it's anything other than a dev store.
