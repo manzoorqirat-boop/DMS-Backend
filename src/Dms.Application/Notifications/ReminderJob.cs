@@ -1,5 +1,6 @@
 using System.Globalization;
 using Dms.Application.Abstractions;
+using Dms.Application.Common;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Dms.Domain.Services;
@@ -37,6 +38,17 @@ public sealed class ReminderJob(
     IClock clock)
 {
     public const string JobName = "daily-reminders";
+
+    /// <summary>
+    /// How many subjects one sweep considers per section.
+    /// <para>
+    /// The sweep reads paged sources, so it needs an explicit bound. Deliberately generous but
+    /// finite: an unbounded sweep on a register with a long-neglected overdue backlog would try
+    /// to load every row into memory at once. Anything past this is picked up by the next run,
+    /// and the run record's item count makes a persistent backlog visible.
+    /// </para>
+    /// </summary>
+    private static PagedRequest SweepPage => new(1, PagedRequest.MaxPageSize);
 
     public async Task<JobRunSummary> RunAsync(string trigger, CancellationToken cancellationToken)
     {
@@ -86,10 +98,10 @@ public sealed class ReminderJob(
         // matched against the rule that actually applies to its type.
         var horizon = today.AddDays(comingDue.Select(r => r.LeadDays).DefaultIfEmpty(0).Max());
 
-        var due = await documents.ListDueForReviewAsync(horizon, null, null, cancellationToken);
+        var due = await documents.ListDueForReviewAsync(horizon, null, null, SweepPage, cancellationToken);
         var candidates = new List<PendingNotification>();
 
-        foreach (var document in due)
+        foreach (var document in due.Items)
         {
             var isOverdue = document.NextReviewDate!.Value < today;
             var applicable = Resolve(isOverdue ? overdue : comingDue, document.DocumentTypeId);
@@ -207,10 +219,10 @@ public sealed class ReminderJob(
             return 0;
         }
 
-        var outstanding = await distributions.ListPendingRetrievalAsync(null, cancellationToken);
+        var outstanding = await distributions.ListPendingRetrievalAsync(null, SweepPage, cancellationToken);
         var candidates = new List<PendingNotification>();
 
-        foreach (var (copy, document) in outstanding)
+        foreach (var (copy, document) in outstanding.Items)
         {
             var rule = Resolve(applicableRules, document.DocumentTypeId);
             if (rule is null)
@@ -237,10 +249,10 @@ public sealed class ReminderJob(
         }
 
         var today = clock.Today;
-        var due = await documents.ListDueForDispositionAsync(today, null, cancellationToken);
+        var due = await documents.ListDueForDispositionAsync(today, null, SweepPage, cancellationToken);
         var candidates = new List<PendingNotification>();
 
-        foreach (var document in due)
+        foreach (var document in due.Items)
         {
             var rule = Resolve(applicableRules, document.DocumentTypeId);
             if (rule is null)
