@@ -371,14 +371,15 @@ public sealed class DistributionService(
     /// The retrieval worklist: copies still in circulation for documents that are no longer
     /// current. This is what someone works through after a supersession.
     /// </summary>
-    public async Task<IReadOnlyList<PendingRetrievalView>> ListPendingRetrievalAsync(
+    public async Task<PagedResult<PendingRetrievalView>> ListPendingRetrievalAsync(
         Guid? siteId,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
-        var pending = await distributions.ListPendingRetrievalAsync(siteId, cancellationToken);
+        var pending = await distributions.ListPendingRetrievalAsync(siteId, paging, cancellationToken);
 
         return pending
-            .Select(x => new PendingRetrievalView(
+            .Map(x => new PendingRetrievalView(
                 x.Copy.Id,
                 x.Document.Id,
                 x.Document.DocumentNumber,
@@ -390,30 +391,29 @@ public sealed class DistributionService(
                 x.Copy.IssuedToName,
                 x.Copy.Status,
                 ScanCodeFor(x.Document, x.Copy),
-                x.Copy.CreatedAt))
-            .ToList();
+                x.Copy.CreatedAt));
     }
 
-    public async Task<Result<IReadOnlyList<PrintEventView>>> ListPrintHistoryAsync(
+    public async Task<Result<PagedResult<PrintEventView>>> ListPrintHistoryAsync(
         Guid documentId,
+        PagedRequest paging,
         CancellationToken cancellationToken)
     {
         var copies = await distributions.ListForDocumentAsync(documentId, cancellationToken);
         var byId = copies.ToDictionary(c => c.Id, c => c.CopyNumber);
 
-        var events = await distributions.ListPrintEventsAsync(documentId, cancellationToken);
+        var events = await distributions.ListPrintEventsAsync(documentId, paging, cancellationToken);
 
-        return Result<IReadOnlyList<PrintEventView>>.Success(
+        return Result<PagedResult<PrintEventView>>.Success(
             events
-                .Select(e => new PrintEventView(
+                .Map(e => new PrintEventView(
                     e.Id,
                     e.DistributionId,
                     byId.GetValueOrDefault(e.DistributionId),
                     e.PrintSequence,
                     e.PrintedBy,
                     e.Watermark,
-                    e.PrintedAt))
-                .ToList());
+                    e.PrintedAt)));
     }
 
     private static string ScanCodeFor(ControlledDocument document, DocumentDistribution copy) =>
