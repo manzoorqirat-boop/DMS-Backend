@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+
+    <!-- Relaxed for tests only. The solution builds with TreatWarningsAsErrors, which is right
+         for production code but turns any xUnit analyzer suggestion into a build failure —
+         and a test project that won't compile because of a style hint helps nobody. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <!-- Test names are sentences with underscores, deliberately. -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Dms.Domain\Dms.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>
