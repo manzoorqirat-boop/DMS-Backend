@@ -51,13 +51,36 @@ public static class DocumentEndpoints
 
         // The master register view: every controlled document, filterable by where it sits in
         // the site/department/type hierarchy.
+        // Defaults to the master list — one row per document showing the revision in force.
+        // Pass currentRevisionsOnly=false for the full register including superseded revisions.
         group.MapGet("/", async (
             DraftCreationService service,
             Guid? siteId,
             Guid? departmentId,
             Guid? documentTypeId,
+            bool? currentRevisionsOnly,
             CancellationToken ct) =>
-            Results.Ok(await service.ListAsync(siteId, departmentId, documentTypeId, ct)));
+            Results.Ok(await service.ListAsync(
+                siteId, departmentId, documentTypeId, currentRevisionsOnly ?? true, ct)));
+
+        group.MapGet("/{id:guid}/revisions", async (
+            DocumentRevisionService service,
+            Guid id,
+            CancellationToken ct) =>
+            (await service.ListRevisionsAsync(id, ct)).ToHttpResult());
+
+        // Opens Rev n+1 from the version currently in force, as a new Draft record. The
+        // predecessor is untouched until the successor is actually issued.
+        group.MapPost("/{id:guid}/revise", async (
+            DocumentRevisionService service,
+            Guid id,
+            ReviseRequest request,
+            CancellationToken ct) =>
+        {
+            var result = await service.BeginRevisionAsync(id, request.Reason, ct);
+            return result.ToHttpResult(created =>
+                Results.Created($"/api/documents/{created.Id}", created));
+        });
 
         group.MapGet("/{id:guid}", async (
             DraftCreationService service,
@@ -93,3 +116,5 @@ public static class DocumentEndpoints
         });
     }
 }
+
+public sealed record ReviseRequest(string Reason);
