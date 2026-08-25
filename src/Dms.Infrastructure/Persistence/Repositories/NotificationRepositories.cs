@@ -112,3 +112,30 @@ public sealed class LoggingNotificationSender(ILogger<LoggingNotificationSender>
         return Task.FromResult(NotificationDeliveryResult.Success);
     }
 }
+
+public sealed class EditingSessionRepository(DmsDbContext db) : IEditingSessionRepository
+{
+    public Task<EditingSession?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+        db.EditingSessions.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public Task<EditingSession?> GetActiveForDocumentAsync(
+        Guid documentId,
+        CancellationToken cancellationToken) =>
+        db.EditingSessions.FirstOrDefaultAsync(
+            x => x.DocumentId == documentId && x.Status == EditingSessionStatus.Active,
+            cancellationToken);
+
+    public async Task<IReadOnlyList<EditingSession>> ListForDocumentAsync(
+        Guid documentId,
+        CancellationToken cancellationToken) =>
+        await db.EditingSessions
+            .AsNoTracking()
+            .Where(x => x.DocumentId == documentId)
+            .OrderByDescending(x => x.StartedAt)
+            .ToListAsync(cancellationToken);
+
+    public void Add(EditingSession session) => db.EditingSessions.Add(session);
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
