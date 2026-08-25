@@ -29,11 +29,9 @@ USER dms
 # Template and document blobs need to survive a redeploy — losing the template a controlled
 # document was created from is a data-integrity problem, not an inconvenience. On Railway
 # that means attaching a Railway Volume to this service and mounting it at /app/storage; see
-# RAILWAY_DEPLOY.md. Deliberately NOT declared with a Dockerfile VOLUME instruction here —
-# Railway's builder rejects that directive outright ("use Railway Volumes" is the actual
-# build error), so the directory below exists as a plain, writable path for the app to use
-# whether or not a volume ends up mounted on top of it; only the mount is what makes it
-# durable across deploys.
+# RAILWAY_DEPLOY.md. This directory is left as a plain writable path rather than declared as
+# a persistent mount point in this file — Railway's builder rejects that declaration outright
+# at build time, so the mount is configured entirely on Railway's side instead.
 
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
