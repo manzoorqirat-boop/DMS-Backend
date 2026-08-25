@@ -145,6 +145,14 @@ public enum AuditAction
     DocumentPeriodicReviewRecorded,
     ReviewPolicyCreated,
     ReviewPolicyChanged,
+
+    // Distribution and controlled printing
+    CopyIssued,
+    CopyAcknowledged,
+    CopyRetrieved,
+    CopyClosedOut,
+    CopyPrinted,
+    CopyPrintRefused,
 }
 
 /// <summary>Why a person is on a signature route.</summary>
@@ -288,4 +296,50 @@ public enum MetadataSource
 
     /// <summary>Current document status, e.g. "Draft".</summary>
     Status,
+}
+
+/// <summary>
+/// What kind of copy was issued, which decides how it is watermarked and whether it is owed
+/// back at the end of the document's life.
+/// </summary>
+public enum CopyType
+{
+    /// <summary>
+    /// Tracked, numbered, and must be retrieved when the document is superseded or withdrawn.
+    /// The only kind anyone is permitted to work from.
+    /// </summary>
+    Controlled,
+
+    /// <summary>
+    /// Issued for information only and never retrieved. Watermarked to say so, because an
+    /// uncontrolled copy that doesn't announce itself is indistinguishable from a controlled
+    /// one the moment it leaves the printer.
+    /// </summary>
+    Uncontrolled,
+
+    /// <summary>
+    /// Issued to an external party — auditor, regulator, contract partner. Tracked like a
+    /// controlled copy but recorded separately, since "who outside the company holds our
+    /// procedures" is its own question.
+    /// </summary>
+    External,
+}
+
+public enum DistributionStatus
+{
+    /// <summary>Sent, not yet confirmed as received.</summary>
+    Issued,
+
+    /// <summary>Recipient confirmed receipt.</summary>
+    Acknowledged,
+
+    /// <summary>Physically collected back. The normal end for a controlled copy.</summary>
+    Retrieved,
+
+    /// <summary>Destroyed on site instead of returned, with a recorded note.</summary>
+    Destroyed,
+
+    /// <summary>Could not be accounted for. Deliberately a distinct outcome, not folded into
+    /// Destroyed — an unaccounted controlled copy is a finding and must read as one.</summary>
+    Lost,
 }
