@@ -121,6 +121,15 @@ public class ControlledDocumentConfiguration : IEntityTypeConfiguration<Controll
         builder.HasIndex(x => x.IsCurrentRevision)
             .HasDatabaseName("ix_controlled_documents_current");
 
+        builder.Property(x => x.ObsoleteReason).HasMaxLength(1000);
+        builder.Property(x => x.LastReviewedBy).HasMaxLength(128);
+
+        // Drives the periodic-review report. Partial, because only Effective documents can be
+        // due — indexing the nulls on every draft and superseded revision would be dead weight.
+        builder.HasIndex(x => x.NextReviewDate)
+            .HasFilter("next_review_date IS NOT NULL")
+            .HasDatabaseName("ix_controlled_documents_next_review");
+
         builder.HasIndex(x => new { x.DepartmentId, x.Status })
             .HasDatabaseName("ix_controlled_documents_department_status");
     }
