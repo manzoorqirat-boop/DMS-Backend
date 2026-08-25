@@ -541,6 +541,15 @@ read-then-write across two concurrent admins is not atomic:
 
 Both are translated back into `409 Conflict` with a distinguishable `code`.
 
+## API documentation
+
+Swagger UI at `/swagger`, spec at `/swagger/v1/swagger.json`. Authorize with the `accessToken`
+from `POST /api/auth/login`.
+
+On in Development, off elsewhere unless `OpenApi:Enabled` is set. A public, unauthenticated map
+of every endpoint in a regulated system is a reconnaissance aid, so enabling it in a validated
+environment should be a deliberate act rather than an inherited default.
+
 ## Before first build
 
 Nothing in this repository has been compiled. There was no .NET SDK or NuGet access in the
@@ -560,6 +569,28 @@ Three things must happen before this runs:
      role** than the application, or the app can drop its own audit triggers
 
 ## Running locally
+
+### Docker (full stack)
+
+```bash
+cp .env.example .env      # then edit the secrets
+docker compose up --build
+```
+
+Brings up the API on :8080, Postgres on :5432, and an OnlyOffice Document Server on :8081.
+Swagger is at http://localhost:8080/swagger.
+
+The compose file is a development convenience, **not a deployment topology**. Two things in it
+are wrong for production by design: the document server runs with `JWT_ENABLED=false`, and
+every secret is a committed placeholder.
+
+One value is worth understanding rather than copying: `DocumentServer__CallbackBaseUrl` is the
+API **as the document server sees it** — `http://api:8080` on the compose network, not
+`localhost`. Get it wrong and the editor renders perfectly and silently never saves.
+
+Migrations do not run automatically. Apply them before first use.
+
+### From source
 
 ```bash
 dotnet restore
