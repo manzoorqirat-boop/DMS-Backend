@@ -11,6 +11,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddProblemDetails();
 
+builder.Services.AddHostedService<DailyReminderService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
@@ -52,6 +53,7 @@ app.MapWorkflowEndpoints();
 app.MapMetadataEndpoints();
 app.MapLifecycleEndpoints();
 app.MapDistributionEndpoints();
+app.MapNotificationEndpoints();
 app.MapReviewEndpoints();
 app.MapAuditEndpoints();
 
