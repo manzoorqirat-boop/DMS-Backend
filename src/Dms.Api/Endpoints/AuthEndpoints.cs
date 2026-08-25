@@ -22,15 +22,9 @@ public static class AuthEndpoints
                 ? Results.Unauthorized()
                 : Results.Ok(new { userName = currentUser.UserName }));
 
-        // Requires the current password even though the caller is authenticated: the password
-        // is also the signing credential, so an unattended session must not be enough to take
-        // over someone's ability to sign.
-        group.MapPost("/change-password", async (
-            AuthService service,
-            ICurrentUser currentUser,
-            ChangePasswordRequest request,
-            CancellationToken ct) =>
-            (await service.ChangeOwnPasswordAsync(currentUser.UserName ?? "", request, ct))
-                .ToHttpResult(_ => Results.NoContent()));
+        // Changing a password lives at /api/users/me/change-password, not here. It is
+        // self-service with no administrator reset, because a password an administrator can
+        // set is a credential a second person knows — which would let them sign as someone
+        // else. Keeping it on the user endpoints keeps that reasoning in one place.
     }
 }
