@@ -263,3 +263,37 @@ public sealed class MetadataFieldRepository(DmsDbContext db) : IMetadataFieldRep
     public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
         SaveChangesTranslator.SaveAsync(db, cancellationToken);
 }
+
+public sealed class ReviewPolicyRepository(DmsDbContext db) : IReviewPolicyRepository
+{
+    public async Task<IReadOnlyList<ReviewPolicy>> FindCandidatesAsync(
+        Guid documentTypeId,
+        Guid siteId,
+        CancellationToken cancellationToken) =>
+        await db.ReviewPolicies
+            .AsNoTracking()
+            .Where(p => p.DocumentTypeId == documentTypeId && (p.SiteId == null || p.SiteId == siteId))
+            .ToListAsync(cancellationToken);
+
+    public Task<ReviewPolicy?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+        db.ReviewPolicies.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<ReviewPolicy>> ListAsync(
+        Guid? documentTypeId,
+        CancellationToken cancellationToken)
+    {
+        var query = db.ReviewPolicies.AsQueryable();
+
+        if (documentTypeId is { } type)
+        {
+            query = query.Where(x => x.DocumentTypeId == type);
+        }
+
+        return await query.OrderBy(x => x.DocumentTypeId).ThenBy(x => x.SiteId).ToListAsync(cancellationToken);
+    }
+
+    public void Add(ReviewPolicy policy) => db.ReviewPolicies.Add(policy);
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
