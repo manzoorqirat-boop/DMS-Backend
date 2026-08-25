@@ -206,6 +206,40 @@ records forward for destruction is the one direction that must never happen by a
 
 ## Reminders & scheduling
 
+Entirely **rule-driven**. `NotificationRule` is master data controlling, per notification kind
+and optionally per document type: whether it fires, how far ahead, how often it repeats, who
+receives it, and the exact subject and body text.
+
+A kind with no enabled rule doesn't fire at all. That's deliberate — inventing reminders
+nobody configured fills inboxes with items whose owners never agreed they were owners, and the
+fastest way to make a reminder system useless is to make it noisy. `BootstrapSeeder` seeds a
+starting set **as editable rows**, not as code fallbacks, so they're ordinary configuration
+from the moment they exist.
+
+**Recipients resolve through the privilege matrix.** `RecipientMode.RoleHolders` plus a role
+means "everyone holding that role at *this document's* site and department" — so "the QA head"
+is the one at the plant that owns the SOP, without a separate department-owner field to
+maintain. The other modes are DocumentAuthor, CopyIssuer and StepAssignee.
+
+**`LeadDays` and `RepeatEveryDays` are separate.** A coming-due warning repeating daily
+through a 90-day window gets muted by its recipients within a week; an overdue item should
+keep arriving. The repeat window feeds the dedupe key, so the behaviour falls out of the
+existing unique index rather than needing new logic.
+
+Message templates use the same token syntax as numbering patterns and are validated **when
+saved**, against the token set for that kind — a rule can't reference a copy number on a review
+reminder. `POST /api/notification-rules/preview` renders sample output first;
+`GET /api/notification-rules/options` returns every kind, mode and available token for an
+admin UI to build the form.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/api/notification-rules/options` | Kinds, recipient modes, tokens per kind |
+| `GET`/`POST`/`PUT` | `/api/notification-rules` | Rule master data |
+| `POST` | `/api/notification-rules/{id}/enable`, `/disable` | Toggle without deleting |
+| `POST` | `/api/notification-rules/preview` | Render templates against sample values |
+
+
 `ReminderJob` sweeps daily for four things: reviews coming due, reviews overdue, signatures
 pending, and controlled copies either unacknowledged after 7 days or still owed back. Each
 queues a `Notification` row rather than mailing inline — a job that mails directly has no
@@ -507,6 +541,24 @@ read-then-write across two concurrent admins is not atomic:
 
 Both are translated back into `409 Conflict` with a distinguishable `code`.
 
+## Before first build
+
+Nothing in this repository has been compiled. There was no .NET SDK or NuGet access in the
+environment it was written in, so every file is unverified against a compiler. Expect the
+first `dotnet build` to surface real errors — most likely in EF model configuration
+(backing-field navigations, partial-index filter strings) and in the package versions in
+`Directory.Packages.props`, which are all guesses.
+
+Three things must happen before this runs:
+
+1. `dotnet build` — fix what it finds.
+2. `dotnet sln add tests/Dms.Domain.Tests/Dms.Domain.Tests.csproj && dotnet test` — 85 tests,
+   also never executed.
+3. `dotnet ef migrations add InitialCreate` — then hand-add two things the model can't express:
+   - `migrationBuilder.Sql(...)` for `Persistence/Migrations/AuditImmutability.sql`
+   - `REVOKE TRUNCATE ON dms.audit_events FROM <app role>`, and run migrations as a **different
+     role** than the application, or the app can drop its own audit triggers
+
 ## Running locally
 
 ```bash
@@ -531,13 +583,9 @@ dotnet run --project src/Dms.Api
   every application service are not.
 - **Mail transport** — see the warning above. The queue, dedupe and run evidence are real;
   delivery is not.
-- **Reminders go to the document author**, since there's no department-owner concept yet. The
-  author is the closest attributable person but often isn't who should be chased.
-- **`PreIntimationDays` is stored but not yet read by the sweep**, which uses a fixed 30-day
-  window. Wiring the per-type value in is a small change to `ReminderJob`.
-- **Disposition isn't on the reminder sweep.** `ReminderJob` doesn't yet queue notifications
-  for records sitting on the disposition worklist, so it has to be checked rather than
-  arriving.
+- **`ReviewPolicy.PreIntimationDays` is now redundant** — lead time lives on the notification
+  rule, where it can differ per reminder kind. The column is still there and still returned;
+  it should be dropped or the two reconciled.
 - **Watermark rendering** — see the warning above. The control layer is complete; the
   stamping is not.
 - **Four-digit sequence ceiling** — 9,999 documents per site/department/type before numbers
