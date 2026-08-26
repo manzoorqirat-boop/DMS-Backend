@@ -4,6 +4,7 @@ using Dms.Application.Metadata;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Dms.Domain.Services;
+using Dms.Domain.Common;
 
 namespace Dms.Application.Documents;
 
@@ -114,7 +115,7 @@ public sealed class DocumentRevisionService(
                 $"The stored file for the active template of '{documentType.Code}' is missing.");
         }
 
-        var workingCopyKey = $"documents/{Guid.CreateVersion7():N}.docx";
+        var workingCopyKey = $"documents/{Uuid7.NewGuid():N}.docx";
 
         ControlledDocument revision;
         try
