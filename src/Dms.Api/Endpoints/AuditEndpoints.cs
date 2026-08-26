@@ -1,4 +1,5 @@
 using Dms.Application.Abstractions;
+using Dms.Application.Common;
 using Dms.Application.Documents;
 
 namespace Dms.Api.Endpoints;
@@ -16,12 +17,17 @@ public static class AuditEndpoints
             IAuditQuery audit,
             Guid? entityId,
             string? entityType,
-            int? limit,
+            string? actor,
+            DateTimeOffset? from,
+            DateTimeOffset? to,
+            int? page,
+            int? pageSize,
             CancellationToken ct) =>
         {
-            var events = await audit.ListAsync(entityId, entityType, limit ?? 100, ct);
+            var events = await audit.ListAsync(
+                entityId, entityType, actor, from, to, new PagedRequest(page, pageSize), ct);
 
-            return Results.Ok(events.Select(e => new
+            return Results.Ok(events.Map(e => new
             {
                 e.Id,
                 e.OccurredAt,
