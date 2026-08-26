@@ -2,6 +2,7 @@ using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Dms.Domain.Services;
 using Xunit;
+using Dms.Domain.Common;
 
 namespace Dms.Domain.Tests;
 
@@ -63,7 +64,7 @@ public class NotificationRuleTests
     {
         var rule = new NotificationRule(
             NotificationKind.ReviewOverdue, null, NotificationRecipientMode.RoleHolders,
-            Guid.CreateVersion7(), 0, 1, "Overdue: {DocumentNumber}", "{Title} is overdue.", "admin");
+            Uuid7.NewGuid(), 0, 1, "Overdue: {DocumentNumber}", "{Title} is overdue.", "admin");
 
         rule.Update(NotificationRecipientMode.DocumentAuthor, null, 0, 1,
             "Overdue: {DocumentNumber}", "{Title} is overdue.");
@@ -121,7 +122,7 @@ public class NotificationRuleTests
     {
         var catchAll = Rule();
         var typeSpecific = new NotificationRule(
-            NotificationKind.ReviewComingDue, Guid.CreateVersion7(),
+            NotificationKind.ReviewComingDue, Uuid7.NewGuid(),
             NotificationRecipientMode.DocumentAuthor, null, 60, 0,
             "Review due: {DocumentNumber}", "{Title} is due on {DueDate}.", "admin");
 
