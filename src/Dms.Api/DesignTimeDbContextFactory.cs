@@ -44,18 +44,40 @@ public sealed class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<Dms
             DatabaseConnectionStringResolver.DatabaseUrlEnvironmentVariable);
         var configured = Environment.GetEnvironmentVariable("ConnectionStrings__Postgres");
 
-        // `migrations add`, `migrations list` and `migrations script` only ever read the
-        // compiled model — they never open a connection. Hard-failing them for want of a
-        // connection string would block exactly the commands that need one least, which is
-        // what happened the first time this ran in CI. So a placeholder stands in when
-        // nothing is configured: the model-only commands proceed normally, while anything
-        // that genuinely connects (`database update`) still fails, just against an obviously
-        // unreachable host rather than with a confusing configuration error.
-        var connectionString =
-            string.IsNullOrWhiteSpace(databaseUrl) && string.IsNullOrWhiteSpace(configured)
-                ? "Host=localhost;Port=5432;Database=dms_design_time;Username=postgres;Password=postgres"
-                : DatabaseConnectionStringResolver.Resolve(databaseUrl, configured);
+        var haveConnectionString =
+            !string.IsNullOrWhiteSpace(databaseUrl) || !string.IsNullOrWhiteSpace(configured);
 
+        if (haveConnectionString)
+        {
+            return Build(DatabaseConnectionStringResolver.Resolve(databaseUrl, configured));
+        }
+
+        // `migrations add`, `migrations list` and `migrations script` only ever read the
+        // compiled model — they never open a connection, so a placeholder is enough to let
+        // them run without any database configured at all. `database update` genuinely
+        // connects, and for that a missing connection string has to fail here, saying so
+        // plainly: an earlier version of this used the placeholder unconditionally, which
+        // turned "you didn't set DATABASE_URL" into a far more confusing "failed to connect
+        // to 127.0.0.1:5432" several stack frames later.
+        //
+        // EF passes the invoked command through args, so the distinction is available here.
+        var isModelOnlyCommand = args.Any(a =>
+            a.Contains("migrations", StringComparison.OrdinalIgnoreCase));
+
+        if (!isModelOnlyCommand)
+        {
+            throw new InvalidOperationException(
+                "Neither DATABASE_URL nor ConnectionStrings__Postgres is set, and this command " +
+                "needs a real database connection. In CI, check that DATABASE_URL exists as an " +
+                "environment secret on the GitHub Environment this job declares (Settings > " +
+                "Environments), not only as a repository secret.");
+        }
+
+        return Build("Host=localhost;Port=5432;Database=dms_design_time;Username=postgres;Password=postgres");
+    }
+
+    private static DmsDbContext Build(string connectionString)
+    {
         var optionsBuilder = new DbContextOptionsBuilder<DmsDbContext>();
 
         optionsBuilder.UseNpgsql(connectionString, npgsql =>
