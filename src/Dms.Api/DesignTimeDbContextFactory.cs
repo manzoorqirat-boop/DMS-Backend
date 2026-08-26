@@ -44,35 +44,26 @@ public sealed class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<Dms
             DatabaseConnectionStringResolver.DatabaseUrlEnvironmentVariable);
         var configured = Environment.GetEnvironmentVariable("ConnectionStrings__Postgres");
 
-        var haveConnectionString =
-            !string.IsNullOrWhiteSpace(databaseUrl) || !string.IsNullOrWhiteSpace(configured);
-
-        if (haveConnectionString)
+        if (!string.IsNullOrWhiteSpace(databaseUrl) || !string.IsNullOrWhiteSpace(configured))
         {
             return Build(DatabaseConnectionStringResolver.Resolve(databaseUrl, configured));
         }
 
-        // `migrations add`, `migrations list` and `migrations script` only ever read the
-        // compiled model — they never open a connection, so a placeholder is enough to let
-        // them run without any database configured at all. `database update` genuinely
-        // connects, and for that a missing connection string has to fail here, saying so
-        // plainly: an earlier version of this used the placeholder unconditionally, which
-        // turned "you didn't set DATABASE_URL" into a far more confusing "failed to connect
-        // to 127.0.0.1:5432" several stack frames later.
+        // Nothing configured: fall back to a placeholder so the commands that need no database
+        // still work. `migrations add`, `migrations list` and `migrations script` only read the
+        // compiled model and never open a connection — generating a migration on a laptop with
+        // no Postgres running is a completely normal thing to do, and this factory must not
+        // stand in the way of it.
         //
-        // EF passes the invoked command through args, so the distinction is available here.
-        var isModelOnlyCommand = args.Any(a =>
-            a.Contains("migrations", StringComparison.OrdinalIgnoreCase));
-
-        if (!isModelOnlyCommand)
-        {
-            throw new InvalidOperationException(
-                "Neither DATABASE_URL nor ConnectionStrings__Postgres is set, and this command " +
-                "needs a real database connection. In CI, check that DATABASE_URL exists as an " +
-                "environment secret on the GitHub Environment this job declares (Settings > " +
-                "Environments), not only as a repository secret.");
-        }
-
+        // A previous version tried to be smarter, throwing a helpful "you forgot to set
+        // DATABASE_URL" error for commands that *do* connect, distinguishing them by looking
+        // for "migrations" in `args`. That was built on an assumption about EF's design-time
+        // invocation that turned out to be wrong: `args` is empty in practice, so every
+        // command took the throw path and even `migrations list` failed. Reverted to the
+        // simpler behaviour on purpose — `database update` without a connection string now
+        // fails at connection time against localhost instead, which is a slightly less
+        // pointed error but an honest one, and the workflow's own DATABASE_URL precheck
+        // already catches that case earlier with a clear message anyway.
         return Build("Host=localhost;Port=5432;Database=dms_design_time;Username=postgres;Password=postgres");
     }
 
