@@ -12,7 +12,7 @@ namespace Dms.Domain.Common;
 public abstract class Entity
 {
     /// <summary>Primary key. Assigned once, at construction. Never reassigned.</summary>
-    public Guid Id { get; protected set; } = Guid.CreateVersion7();
+    public Guid Id { get; protected set; } = Uuid7.NewGuid();
 
     public override bool Equals(object? obj) =>
         obj is Entity other && GetType() == other.GetType() && Id.Equals(other.Id);
