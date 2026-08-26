@@ -39,10 +39,25 @@ public class DocumentTemplateConfiguration : IEntityTypeConfiguration<DocumentTe
         // Stored as jsonb via an explicit conversion rather than relying on EF's primitive-
         // collection inference to guess right on an interface-typed (IReadOnlyList<string>)
         // property — pinning the mapping down explicitly beats trusting convention here.
+        //
+        // Block-bodied lambdas here, deliberately: EF's HasConversion(Func, Func) overload and
+        // its HasConversion(Expression<Func<...>>, Expression<Func<...>>) overload both exist,
+        // and a single-expression lambda is ambiguous enough between them that the compiler
+        // picked the expression-tree one — which then rejects JsonSerializer.Serialize's
+        // optional `options` parameter and the `?? []` collection expression outright, neither
+        // of which an expression tree can contain. A block body can only ever bind to a real
+        // delegate, never an expression tree, which removes the ambiguity entirely rather than
+        // working around each symptom one compiler error at a time.
         builder.Property(x => x.ValidationIssues)
             .HasConversion(
-                v => JsonSerializer.Serialize(v),
-                v => (IReadOnlyList<string>)(JsonSerializer.Deserialize<List<string>>(v) ?? []))
+                v =>
+                {
+                    return JsonSerializer.Serialize(v);
+                },
+                v =>
+                {
+                    return (IReadOnlyList<string>)(JsonSerializer.Deserialize<List<string>>(v) ?? new List<string>());
+                })
             .HasColumnType("jsonb")
             .IsRequired();
 
