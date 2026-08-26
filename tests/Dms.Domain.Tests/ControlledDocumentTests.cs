@@ -1,6 +1,7 @@
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Xunit;
+using Dms.Domain.Common;
 
 namespace Dms.Domain.Tests;
 
@@ -16,10 +17,10 @@ public class ControlledDocumentTests
     private static ControlledDocument NewDraft() => new(
         "MNK-QA-SOP-0001",
         "Cleaning of Vessel V-101",
-        Guid.CreateVersion7(),
-        Guid.CreateVersion7(),
-        Guid.CreateVersion7(),
-        Guid.CreateVersion7(),
+        Uuid7.NewGuid(),
+        Uuid7.NewGuid(),
+        Uuid7.NewGuid(),
+        Uuid7.NewGuid(),
         "documents/abc.docx",
         "a.nair");
 
