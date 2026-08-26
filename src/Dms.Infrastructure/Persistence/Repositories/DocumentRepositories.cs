@@ -99,7 +99,20 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
             query = query.Where(x => x.DocumentTypeId == type);
         }
 
-        return await query.OrderBy(x => x.DocumentNumber).ToListAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            // ILike rather than ToLower().Contains(): it maps to a real Postgres operator and
+            // can use a trigram index, where the lowercase trick forces a full scan on every
+            // row of the register.
+            var pattern = $"%{search.Trim()}%";
+            query = query.Where(x =>
+                EF.Functions.ILike(x.DocumentNumber, pattern) || EF.Functions.ILike(x.Title, pattern));
+        }
+
+        return await query
+            .OrderBy(x => x.DocumentNumber)
+            .ThenBy(x => x.Revision)
+            .ToPagedResultAsync(paging, cancellationToken);
     }
 
     public async Task<IReadOnlyList<ControlledDocument>> ListFamilyAsync(
