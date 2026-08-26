@@ -40,24 +40,17 @@ public class DocumentTemplateConfiguration : IEntityTypeConfiguration<DocumentTe
         // collection inference to guess right on an interface-typed (IReadOnlyList<string>)
         // property — pinning the mapping down explicitly beats trusting convention here.
         //
-        // Block-bodied lambdas here, deliberately: EF's HasConversion(Func, Func) overload and
-        // its HasConversion(Expression<Func<...>>, Expression<Func<...>>) overload both exist,
-        // and a single-expression lambda is ambiguous enough between them that the compiler
-        // picked the expression-tree one — which then rejects JsonSerializer.Serialize's
-        // optional `options` parameter and the `?? []` collection expression outright, neither
-        // of which an expression tree can contain. A block body can only ever bind to a real
-        // delegate, never an expression tree, which removes the ambiguity entirely rather than
-        // working around each symptom one compiler error at a time.
+        // HasConversion's two-lambda form only has the Expression<Func<...>> overload — there
+        // is no delegate-based alternative for the compiler to fall back to, so both lambdas
+        // must be genuinely expressible as expression trees: no block bodies (a block-bodied
+        // lambda can't convert to an expression tree under any circumstance, full stop), and
+        // every optional parameter supplied explicitly rather than omitted — CS0854 objects to
+        // a call relying on its default value inside an expression tree, not to the parameter
+        // existing, so passing null for it here is what actually satisfies the restriction.
         builder.Property(x => x.ValidationIssues)
             .HasConversion(
-                v =>
-                {
-                    return JsonSerializer.Serialize(v);
-                },
-                v =>
-                {
-                    return (IReadOnlyList<string>)(JsonSerializer.Deserialize<List<string>>(v) ?? new List<string>());
-                })
+                v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+                v => (IReadOnlyList<string>)(JsonSerializer.Deserialize<List<string>>(v, (JsonSerializerOptions?)null) ?? new List<string>()))
             .HasColumnType("jsonb")
             .IsRequired();
 
