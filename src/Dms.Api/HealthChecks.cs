@@ -1,6 +1,7 @@
 using Dms.Application.Abstractions;
 using Dms.Infrastructure.Persistence;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Dms.Domain.Common;
 
 namespace Dms.Api;
 
@@ -43,7 +44,7 @@ public sealed class BlobStoreHealthCheck(ITemplateFileStore store) : IHealthChec
     {
         // Written under a reserved prefix and removed immediately. Named distinctly so a stray
         // probe file is never mistaken for a real template.
-        var key = $"_healthcheck/{Guid.CreateVersion7():N}.probe";
+        var key = $"_healthcheck/{Uuid7.NewGuid():N}.probe";
 
         try
         {
