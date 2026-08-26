@@ -1,0 +1,106 @@
+name: migrate
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: >
+          plan: generate and show the exact SQL a migration would run, without touching the
+          database. apply: actually run it. Always run plan first and read its output.
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    # Gated on whatever protection rules the "production" GitHub Environment has configured
+    # (repo Settings > Environments > production) — required reviewers, restricted branches,
+    # a wait timer. That configuration lives in repo settings, not in this file, and this
+    # workflow is safe to add before it's set up: an unconfigured environment just runs with
+    # no gate. Set one up before trusting this with `apply` against a real database — a
+    # migration workflow with no approval step is the automatic-destructive-action problem
+    # this whole codebase otherwise goes out of its way to avoid (see RetentionService,
+    # DispositionAction, and the append-only audit trail for the same principle elsewhere).
+    #
+    # DATABASE_URL is read from THIS environment's own secrets, not repo-wide secrets — set it
+    # under the production environment specifically, so a workflow run that hasn't cleared the
+    # environment's gate can never reach it.
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Pinned to match the EF Core version in Directory.Packages.props. An unpinned `dotnet
+      # tool install` pulls whatever's newest, which is exactly the version drift this project
+      # has otherwise gone out of its way to avoid — bump this deliberately, alongside the
+      # Directory.Packages.props pin, not by surprise on some future run.
+      - run: dotnet tool install --global dotnet-ef --version 8.0.10
+
+      - run: dotnet restore
+
+      # Shown in both modes, always — "what is about to change" is the actually audit-relevant
+      # question, and it costs nothing to print even when nothing is pending.
+      - name: List pending migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: >
+          dotnet ef migrations list
+          --project src/Dms.Infrastructure
+          --startup-project src/Dms.Api
+
+      - name: Generate migration SQL
+        if: inputs.mode == 'plan'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: >
+          dotnet ef migrations script
+          --idempotent
+          --project src/Dms.Infrastructure
+          --startup-project src/Dms.Api
+          --output migration-plan.sql
+
+      - name: Print the plan
+        if: inputs.mode == 'plan'
+        run: cat migration-plan.sql
+
+      # Downloadable, reviewable artifact — not just log text that scrolls away. --idempotent
+      # means this script also happens to be safe to hand-run with psql if that's ever needed,
+      # since it checks __ef_migrations_history itself and skips whatever's already applied.
+      - uses: actions/upload-artifact@v4
+        if: inputs.mode == 'plan'
+        with:
+          name: migration-plan
+          path: migration-plan.sql
+          retention-days: 90
+
+      - name: Apply migrations
+        if: inputs.mode == 'apply'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: >
+          dotnet ef database update
+          --project src/Dms.Infrastructure
+          --startup-project src/Dms.Api
+
+      # Always runs, success or failure — a job summary that only appeared when things went
+      # well would be the least useful time to be missing one.
+      - name: Record what happened
+        if: always()
+        run: |
+          {
+            echo "### Migration run"
+            echo ""
+            echo "- Mode: \`${{ inputs.mode }}\`"
+            echo "- Triggered by: @${{ github.actor }}"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo "- Result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
