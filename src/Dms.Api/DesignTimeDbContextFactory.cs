@@ -40,9 +40,21 @@ public sealed class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<Dms
         // DATABASE_URL if set — Railway's own shape, and what the CI migration workflow
         // provides — falling back to ConnectionStrings__Postgres for local use. Same two
         // sources, same precedence, as AddInfrastructure uses at runtime.
-        var connectionString = DatabaseConnectionStringResolver.Resolve(
-            Environment.GetEnvironmentVariable(DatabaseConnectionStringResolver.DatabaseUrlEnvironmentVariable),
-            Environment.GetEnvironmentVariable("ConnectionStrings__Postgres"));
+        var databaseUrl = Environment.GetEnvironmentVariable(
+            DatabaseConnectionStringResolver.DatabaseUrlEnvironmentVariable);
+        var configured = Environment.GetEnvironmentVariable("ConnectionStrings__Postgres");
+
+        // `migrations add`, `migrations list` and `migrations script` only ever read the
+        // compiled model — they never open a connection. Hard-failing them for want of a
+        // connection string would block exactly the commands that need one least, which is
+        // what happened the first time this ran in CI. So a placeholder stands in when
+        // nothing is configured: the model-only commands proceed normally, while anything
+        // that genuinely connects (`database update`) still fails, just against an obviously
+        // unreachable host rather than with a confusing configuration error.
+        var connectionString =
+            string.IsNullOrWhiteSpace(databaseUrl) && string.IsNullOrWhiteSpace(configured)
+                ? "Host=localhost;Port=5432;Database=dms_design_time;Username=postgres;Password=postgres"
+                : DatabaseConnectionStringResolver.Resolve(databaseUrl, configured);
 
         var optionsBuilder = new DbContextOptionsBuilder<DmsDbContext>();
 
