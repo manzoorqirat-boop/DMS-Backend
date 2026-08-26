@@ -47,6 +47,24 @@ jobs:
 
       - run: dotnet restore
 
+      # Fails immediately, with an explanation, if the secret isn't reaching this job — rather
+      # than letting it surface fifty stack frames deep as "failed to connect to 127.0.0.1".
+      # `apply` is checked strictly; `plan` only warns, since generating a migration script
+      # reads the compiled model and doesn't need a live database.
+      - name: Check DATABASE_URL is available
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::DATABASE_URL is empty. Check Settings > Environments > production > Environment secrets. A repository-level secret is NOT visible to a job that declares an environment unless it is also defined there."
+            if [ "${{ inputs.mode }}" = "apply" ]; then
+              echo "::error::Cannot apply migrations without DATABASE_URL."
+              exit 1
+            fi
+          else
+            echo "DATABASE_URL is present (${#DATABASE_URL} characters)."
+          fi
+
       # Shown in both modes, always — "what is about to change" is the actually audit-relevant
       # question, and it costs nothing to print even when nothing is pending.
       - name: List pending migrations
