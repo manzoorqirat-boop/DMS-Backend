@@ -8,4 +8,18 @@
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Microsoft.Extensions.Http" />
   </ItemGroup>
+  <ItemGroup>
+    <!--
+      The InitialCreate migration reads this file at runtime via
+      File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Persistence", "Migrations",
+      "AuditImmutability.sql")) to install the append-only triggers on the audit and signature
+      tables. AppContext.BaseDirectory is the deployed output folder, not the source tree, so
+      without this the migration compiles cleanly and then throws FileNotFoundException the
+      moment it actually runs. PreserveNewest keeps the relative path intact under the output
+      directory, which is what the Path.Combine above expects.
+    -->
+    <None Update="Persistence\Migrations\AuditImmutability.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>
