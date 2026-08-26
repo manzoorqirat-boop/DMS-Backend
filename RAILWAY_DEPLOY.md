@@ -74,23 +74,44 @@ and doesn't need setting for a first deployment.
 
 ## Step 3 — apply the migration to the live database
 
-Two ways to do this; pick one.
+Three ways to do this. In order of preference:
 
-**Recommended: run it from your own machine, once, against the live database.** Get the
-Postgres plugin's public connection details from Railway's dashboard (or `railway variables`
-via the CLI), set them as `DATABASE_URL` in your shell, and run:
+**Recommended: the `migrate` GitHub Action** (`.github/workflows/migrate.yml`). Manually
+triggered (`workflow_dispatch`), not automatic on push — a schema change against production
+should be a deliberate act, not a side effect of merging code, the same reasoning applied
+everywhere else in this codebase to anything irreversible (see `RetentionService`,
+`DispositionAction`).
+
+Set up once:
+1. In the repo's **Settings → Environments**, create an environment named `production`.
+   Optionally add required reviewers here — doing so means `apply` runs won't execute until
+   someone approves them, which is the actual enforcement mechanism; the workflow file alone
+   can't require a human, only GitHub's environment protection rules can.
+2. Add `DATABASE_URL` as a secret **on that environment specifically** (not a repository-wide
+   secret) — get the value from Railway's Postgres plugin dashboard, same connection string
+   the API itself reads.
+
+To use it: **Actions → migrate → Run workflow**, choose `plan` first. This generates the exact
+SQL the migration would execute (via `dotnet ef migrations script --idempotent`) without
+touching the database, prints it in the log, and uploads it as a downloadable artifact. Read
+it. Then run again with `apply` to actually execute it. Every run's summary records who
+triggered it and which commit it ran against — the attributable record this whole approach is
+for.
+
+**Manual alternative: run it from your own machine.** Get the Postgres plugin's public
+connection details from Railway's dashboard (or `railway variables` via the CLI):
 
 ```bash
 DATABASE_URL="postgres://user:pass@host:port/railway" \
   dotnet ef database update --project src/Dms.Infrastructure --startup-project src/Dms.Api
 ```
 
-This leaves a normal, attributable record of who ran the migration and when — the same
-reasoning the backend applies to everything else it does, and it avoids the race condition
-described below entirely.
+Still leaves an attributable record (you, in your own shell history), just not one anyone else
+can see without asking you — the GitHub Action's real advantage is that the record is visible
+to the whole team by default, not that the underlying command is any different.
 
 **Convenience alternative: `Deploy__RunMigrationsOnStartup=true`.** The API applies any
-pending migration itself the moment it starts. Simpler for a first deploy, but read
+pending migration itself the moment it starts. Simplest for a genuine first deploy, but read
 `StartupMigrator`'s own comments before leaving it on: it's a single-instance convenience.
 The moment this API runs as more than one instance, multiple containers could race to apply
 the same migration on boot, and nothing in EF Core's migration history table protects against
