@@ -3,6 +3,7 @@ using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Dms.Infrastructure.Persistence.Configurations;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace Dms.Infrastructure.Persistence;
 
