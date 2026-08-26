@@ -5,6 +5,7 @@ using Dms.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
+using Dms.Domain.Common;
 
 namespace Dms.Infrastructure.Persistence.Repositories;
 
@@ -218,7 +219,7 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
             command.Transaction = current.GetDbTransaction();
         }
 
-        command.Parameters.Add(new NpgsqlParameter("id", Guid.CreateVersion7()));
+        command.Parameters.Add(new NpgsqlParameter("id", Uuid7.NewGuid()));
         command.Parameters.Add(new NpgsqlParameter("site_id", siteId));
         command.Parameters.Add(new NpgsqlParameter("department_id", departmentId));
         command.Parameters.Add(new NpgsqlParameter("document_type_id", documentTypeId));
