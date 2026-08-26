@@ -20,12 +20,19 @@ public interface IAuditTrail
     /// Human-readable identity of the subject at the time of the event — document number,
     /// template name and version, site code.
     /// </param>
+    /// <param name="actor">
+    /// Explicit override for who the event is attributed to. Leave null for the normal case —
+    /// the authenticated caller, taken from <c>ICurrentUser</c>. Only pass this for the one
+    /// legitimate exception: an anonymous endpoint (login) recording an event about the
+    /// identity it just verified, where there is no authenticated caller to attribute to yet.
+    /// </param>
     void Record(
         AuditAction action,
         string entityType,
         Guid entityId,
         string entityLabel,
-        string? details = null);
+        string? details = null,
+        string? actor = null);
 }
 
 public interface IAuditQuery
