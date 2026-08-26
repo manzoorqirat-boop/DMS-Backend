@@ -23,6 +23,14 @@ namespace Dms.Infrastructure.Persistence.Configurations;
 /// whose contention is already handled by a database constraint, such as the number-sequence
 /// counter, whose UPSERT takes a row lock instead.
 /// </para>
+/// <para>
+/// Configured through EF Core's own standard <c>IsRowVersion()</c> on a shadow <c>uint</c>
+/// property named <c>xmin</c>, rather than the Npgsql-provider-specific
+/// <c>UseXminAsConcurrencyToken()</c> helper this originally used — that helper was marked
+/// obsolete in favour of exactly this pattern, and Npgsql's provider still recognises a
+/// property literally named "xmin" as the Postgres system column either way, so the effect is
+/// identical.
+/// </para>
 /// </summary>
 public static class ConcurrencyConventions
 {
@@ -56,7 +64,7 @@ public static class ConcurrencyConventions
 
         foreach (var type in contended)
         {
-            modelBuilder.Entity(type).UseXminAsConcurrencyToken();
+            modelBuilder.Entity(type).Property<uint>("xmin").IsRowVersion();
         }
     }
 }
