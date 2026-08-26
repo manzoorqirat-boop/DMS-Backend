@@ -4,6 +4,7 @@ using Dms.Application.Metadata;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Dms.Domain.Services;
+using Dms.Domain.Common;
 
 namespace Dms.Application.Editing;
 
@@ -118,7 +119,7 @@ public sealed class EditingService(
         var session = new EditingSession(
             document.Id,
             actor,
-            Guid.CreateVersion7().ToString("N"),
+            Uuid7.NewGuid().ToString("N"),
             clock.UtcNow.Add(settings.SessionLifetime));
 
         sessions.Add(session);
@@ -257,7 +258,7 @@ public sealed class EditingService(
         {
             // Quarantined under its own key so it can be inspected, and deliberately not
             // written over the working copy.
-            var quarantineKey = $"quarantine/{document.Id:N}/{Guid.CreateVersion7():N}.docx";
+            var quarantineKey = $"quarantine/{document.Id:N}/{Uuid7.NewGuid():N}.docx";
             await documentFiles.SaveAsync(quarantineKey, content, cancellationToken);
 
             audit.Record(
