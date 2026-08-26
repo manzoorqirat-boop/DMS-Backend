@@ -2,6 +2,7 @@ using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Dms.Domain.Services;
 using Xunit;
+using Dms.Domain.Common;
 
 namespace Dms.Domain.Tests;
 
@@ -14,7 +15,7 @@ public class PolicyAndSigningTests
     {
         // The clock on "is this still correct" starts when people begin following the
         // document, not when it was drafted or approved.
-        var policy = new ReviewPolicy(Guid.CreateVersion7(), null, 24, "admin");
+        var policy = new ReviewPolicy(Uuid7.NewGuid(), null, 24, "admin");
 
         Assert.Equal(new DateOnly(2028, 8, 25), policy.DueDateFrom(Today));
     }
@@ -26,13 +27,13 @@ public class PolicyAndSigningTests
     public void Review_interval_outside_the_permitted_range_is_rejected(int months)
     {
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new ReviewPolicy(Guid.CreateVersion7(), null, months, "admin"));
+            new ReviewPolicy(Uuid7.NewGuid(), null, months, "admin"));
     }
 
     [Fact]
     public void Retention_expiry_runs_from_the_triggering_event()
     {
-        var policy = new RetentionPolicy(Guid.CreateVersion7(), null, 10, RetentionTrigger.Obsolete, "admin");
+        var policy = new RetentionPolicy(Uuid7.NewGuid(), null, 10, RetentionTrigger.Obsolete, "admin");
 
         Assert.Equal(new DateOnly(2036, 8, 25), policy.RetainUntil(Today));
     }
@@ -43,15 +44,15 @@ public class PolicyAndSigningTests
         // Would make a record disposable the moment it left use, which no schedule permits and
         // which is far more likely a typo than a decision.
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new RetentionPolicy(Guid.CreateVersion7(), null, 0, RetentionTrigger.Obsolete, "admin"));
+            new RetentionPolicy(Uuid7.NewGuid(), null, 0, RetentionTrigger.Obsolete, "admin"));
     }
 
     [Fact]
     public void Site_specific_policy_is_more_specific_than_the_default()
     {
-        var siteWide = new RetentionPolicy(Guid.CreateVersion7(), null, 5, RetentionTrigger.Obsolete, "admin");
+        var siteWide = new RetentionPolicy(Uuid7.NewGuid(), null, 5, RetentionTrigger.Obsolete, "admin");
         var siteOverride = new RetentionPolicy(
-            Guid.CreateVersion7(), Guid.CreateVersion7(), 10, RetentionTrigger.Obsolete, "admin");
+            Uuid7.NewGuid(), Uuid7.NewGuid(), 10, RetentionTrigger.Obsolete, "admin");
 
         Assert.True(siteOverride.Specificity > siteWide.Specificity);
     }
@@ -137,7 +138,7 @@ public class PolicyAndSigningTests
     public void A_controlled_copy_stops_printing_at_its_limit()
     {
         var copy = new DocumentDistribution(
-            Guid.CreateVersion7(), 1, CopyType.Controlled, null, "QA", "admin", printLimit: 2);
+            Uuid7.NewGuid(), 1, CopyType.Controlled, null, "QA", "admin", printLimit: 2);
 
         copy.RecordPrint();
         copy.RecordPrint();
@@ -150,7 +151,7 @@ public class PolicyAndSigningTests
     public void A_retrieved_copy_cannot_be_reprinted()
     {
         var copy = new DocumentDistribution(
-            Guid.CreateVersion7(), 1, CopyType.Controlled, null, "QA", "admin", printLimit: 5);
+            Uuid7.NewGuid(), 1, CopyType.Controlled, null, "QA", "admin", printLimit: 5);
 
         copy.Retrieve("admin");
 
@@ -162,7 +163,7 @@ public class PolicyAndSigningTests
     public void Closing_a_copy_out_as_lost_requires_a_note()
     {
         var copy = new DocumentDistribution(
-            Guid.CreateVersion7(), 1, CopyType.Controlled, null, "QA", "admin", printLimit: 5);
+            Uuid7.NewGuid(), 1, CopyType.Controlled, null, "QA", "admin", printLimit: 5);
 
         Assert.Throws<ArgumentException>(() =>
             copy.CloseOut(DistributionStatus.Lost, "  ", "admin"));
@@ -172,7 +173,7 @@ public class PolicyAndSigningTests
     public void Retrieve_is_not_a_valid_close_out_outcome()
     {
         var copy = new DocumentDistribution(
-            Guid.CreateVersion7(), 1, CopyType.Controlled, null, "QA", "admin", printLimit: 5);
+            Uuid7.NewGuid(), 1, CopyType.Controlled, null, "QA", "admin", printLimit: 5);
 
         Assert.Throws<ArgumentException>(() =>
             copy.CloseOut(DistributionStatus.Retrieved, "Came back.", "admin"));
@@ -182,7 +183,7 @@ public class PolicyAndSigningTests
     public void An_expired_editing_session_can_be_taken_over()
     {
         var session = new EditingSession(
-            Guid.CreateVersion7(), "a.nair", "key1", DateTimeOffset.UtcNow.AddMinutes(-1));
+            Uuid7.NewGuid(), "a.nair", "key1", DateTimeOffset.UtcNow.AddMinutes(-1));
 
         Assert.True(session.HasExpired(DateTimeOffset.UtcNow));
     }
@@ -191,7 +192,7 @@ public class PolicyAndSigningTests
     public void A_closed_editing_session_accepts_no_further_saves()
     {
         var session = new EditingSession(
-            Guid.CreateVersion7(), "a.nair", "key1", DateTimeOffset.UtcNow.AddHours(1));
+            Uuid7.NewGuid(), "a.nair", "key1", DateTimeOffset.UtcNow.AddHours(1));
 
         session.Close(EditingSessionStatus.CheckedIn, "a.nair");
 
