@@ -124,18 +124,26 @@ public static class DependencyInjection
         services.AddScoped<DocumentRevisionService>();
         services.AddScoped<DocumentLifecycleService>();
         services.AddScoped<RetentionService>();
-        services.AddScoped<EditingService>();
 
-        // Token service and HTTP fetcher are only registered when a document server is
-        // configured. HmacEditorTokenService throws on a missing secret by design, and that
-        // must not break every deployment that isn't using in-browser editing yet.
+        // The whole in-browser editing stack registers together or not at all. EditingService
+        // depends on IEditorTokenService and IEditorContentFetcher, so registering it outside
+        // this block left the container unresolvable on any deployment without a document
+        // server configured — which is every deployment right now, including Railway. That
+        // surfaced as a DI validation failure the first time anything validated the container
+        // (`dotnet ef`), and would otherwise have waited to become a runtime 500 the first
+        // time someone opened a document for editing.
+        //
+        // HmacEditorTokenService also throws on a missing secret by design, which is a second
+        // reason none of this can be registered speculatively.
         if (!string.IsNullOrWhiteSpace(configuration[EditorConfig.UrlKey]))
         {
             services.AddSingleton<IEditorTokenService, HmacEditorTokenService>();
             services.AddHttpClient(HttpEditorContentFetcher.ClientName,
                 client => client.Timeout = TimeSpan.FromMinutes(2));
             services.AddScoped<IEditorContentFetcher, HttpEditorContentFetcher>();
+            services.AddScoped<EditingService>();
         }
+
         services.AddScoped<DistributionService>();
         services.AddScoped<NotificationService>();
         services.AddScoped<ReminderJob>();
