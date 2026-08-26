@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json.Serialization;
 using Dms.Api;
 using Dms.Api.Auth;
 using Dms.Api.Endpoints;
@@ -31,6 +32,13 @@ builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddDmsOpenApi();
 builder.Services.AddDmsRateLimiting(builder.Configuration);
+
+// Without this, every enum (TemplateStatus, DocumentStatus, DispositionAction, ...) serializes
+// as its raw ordinal number ("2") instead of its name ("ValidationFailed"). Every DTO record
+// and every frontend type file was written assuming string enums — this is what actually makes
+// that true, for both Results.Ok(...) and WriteAsJsonAsync responses.
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 // A named client for outbound health probes, kept separate from the document-server fetch
 // client so a probe timeout can't be confused with a save failure.
