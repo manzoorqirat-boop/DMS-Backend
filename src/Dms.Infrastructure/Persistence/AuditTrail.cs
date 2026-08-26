@@ -17,19 +17,21 @@ public sealed class AuditTrail(DmsDbContext db, ICurrentUser currentUser) : IAud
         string entityType,
         Guid entityId,
         string entityLabel,
-        string? details = null)
+        string? details = null,
+        string? actor = null)
     {
         // Services already reject unattributable requests before reaching this point, so a
-        // null here means a code path skipped that check. Throwing beats writing "unknown"
-        // into a regulated trail and calling it attribution.
-        var actor = currentUser.UserName;
-        if (string.IsNullOrWhiteSpace(actor))
+        // null here (with no explicit actor override either) means a code path skipped that
+        // check. Throwing beats writing "unknown" into a regulated trail and calling it
+        // attribution.
+        var resolvedActor = actor ?? currentUser.UserName;
+        if (string.IsNullOrWhiteSpace(resolvedActor))
         {
             throw new InvalidOperationException(
                 $"Cannot record {action} for {entityType} {entityId}: no attributable actor.");
         }
 
-        db.AuditEvents.Add(new AuditEvent(action, entityType, entityId, entityLabel, actor, details));
+        db.AuditEvents.Add(new AuditEvent(action, entityType, entityId, entityLabel, resolvedActor, details));
     }
 
     public async Task<PagedResult<AuditEvent>> ListAsync(
