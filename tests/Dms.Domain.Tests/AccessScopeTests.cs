@@ -1,6 +1,7 @@
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Xunit;
+using Dms.Domain.Common;
 
 namespace Dms.Domain.Tests;
 
@@ -10,13 +11,13 @@ namespace Dms.Domain.Tests;
 /// </summary>
 public class AccessScopeTests
 {
-    private static readonly Guid SiteA = Guid.CreateVersion7();
-    private static readonly Guid SiteB = Guid.CreateVersion7();
-    private static readonly Guid QaAtSiteA = Guid.CreateVersion7();
-    private static readonly Guid ProductionAtSiteA = Guid.CreateVersion7();
+    private static readonly Guid SiteA = Uuid7.NewGuid();
+    private static readonly Guid SiteB = Uuid7.NewGuid();
+    private static readonly Guid QaAtSiteA = Uuid7.NewGuid();
+    private static readonly Guid ProductionAtSiteA = Uuid7.NewGuid();
 
     private static UserRoleAssignment Assignment(Guid? siteId, Guid? departmentId) =>
-        new(Guid.CreateVersion7(), Guid.CreateVersion7(), siteId, departmentId, "admin");
+        new(Uuid7.NewGuid(), Uuid7.NewGuid(), siteId, departmentId, "admin");
 
     [Fact]
     public void Global_assignment_applies_everywhere()
