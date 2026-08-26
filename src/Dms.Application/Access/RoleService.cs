@@ -107,6 +107,45 @@ public sealed class RoleService(
         return Result<IReadOnlyList<RoleView>>.Success(found.Select(RoleView.From).ToList());
     }
 
+    /// <summary>
+    /// Every current assignment, optionally narrowed to one user or one role — what "who holds
+    /// what, where" actually looks like right now. There was no way to see this before this
+    /// method existed: <see cref="AssignAsync"/> and <see cref="RevokeAsync"/> both existed
+    /// without it, which meant an admin UI could grant and revoke but never list.
+    /// </summary>
+    public async Task<Result<IReadOnlyList<AssignmentView>>> ListAssignmentsAsync(
+        Guid? userId,
+        Guid? roleId,
+        CancellationToken cancellationToken)
+    {
+        var gate = await RequireRoleAdminAsync(cancellationToken);
+        if (gate is not null)
+        {
+            return gate;
+        }
+
+        var assignments = await roles.ListAssignmentsAsync(userId, roleId, cancellationToken);
+        if (assignments.Count == 0)
+        {
+            return Result<IReadOnlyList<AssignmentView>>.Success([]);
+        }
+
+        // Small, per-request lookups — same pattern ReviewWorkflowService.BuildRouteViewAsync
+        // already uses for the same reason: assignment counts here are administrative
+        // configuration, not something that grows with usage, so there's no batch-fetch
+        // machinery elsewhere in this codebase to reuse.
+        var views = new List<AssignmentView>();
+        foreach (var assignment in assignments)
+        {
+            var user = await users.GetAsync(assignment.UserId, cancellationToken);
+            var role = await roles.GetAsync(assignment.RoleId, cancellationToken);
+            views.Add(AssignmentView.From(
+                assignment, user?.UserName ?? assignment.UserId.ToString(), role?.Code ?? assignment.RoleId.ToString()));
+        }
+
+        return Result<IReadOnlyList<AssignmentView>>.Success(views);
+    }
+
     /// <summary>Grants a user a role, optionally narrowed to a site or one department.</summary>
     public async Task<Result<AssignmentView>> AssignAsync(
         AssignRoleRequest request,
