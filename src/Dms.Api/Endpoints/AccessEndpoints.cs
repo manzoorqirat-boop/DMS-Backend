@@ -50,6 +50,13 @@ public static class AccessEndpoints
                 Results.Created($"/api/roles/assignments/{created.Id}", created));
         });
 
+        group.MapGet("/assignments", async (
+            RoleService service,
+            Guid? userId,
+            Guid? roleId,
+            CancellationToken ct) =>
+            (await service.ListAssignmentsAsync(userId, roleId, ct)).ToHttpResult());
+
         group.MapDelete("/assignments/{id:guid}", async (
             RoleService service,
             Guid id,
