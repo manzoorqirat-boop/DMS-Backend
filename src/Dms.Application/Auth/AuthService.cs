@@ -50,7 +50,7 @@ public sealed class AuthService(
             // matters and the reader is already authorised.
             audit.Record(
                 AuditAction.UserLoginFailed, EntityType, user.Id, user.UserName,
-                "Login attempted against a deactivated account.");
+                "Login attempted against a deactivated account.", actor: user.UserName);
             await users.SaveChangesAsync(cancellationToken);
             return InvalidCredentials();
         }
@@ -59,7 +59,8 @@ public sealed class AuthService(
         {
             audit.Record(
                 AuditAction.UserLoginFailed, EntityType, user.Id, user.UserName,
-                $"Login attempted while locked out until {user.LoginLockedUntil:yyyy-MM-dd HH:mm} UTC.");
+                $"Login attempted while locked out until {user.LoginLockedUntil:yyyy-MM-dd HH:mm} UTC.",
+                actor: user.UserName);
             await users.SaveChangesAsync(cancellationToken);
 
             // Lockout *is* disclosed, unlike the cases above. A legitimate user who has locked
@@ -81,7 +82,8 @@ public sealed class AuthService(
                 EntityType, user.Id, user.UserName,
                 lockedNow
                     ? $"Locked out after {user.FailedLoginAttempts} failed login attempt(s)."
-                    : $"Failed login attempt {user.FailedLoginAttempts} of {policy.FailedLoginThreshold}.");
+                    : $"Failed login attempt {user.FailedLoginAttempts} of {policy.FailedLoginThreshold}.",
+                actor: user.UserName);
 
             await users.SaveChangesAsync(cancellationToken);
             return InvalidCredentials();
@@ -94,7 +96,7 @@ public sealed class AuthService(
 
         audit.Record(
             AuditAction.UserLoggedIn, EntityType, user.Id, user.UserName,
-            $"Signed in. Token valid until {expiresAt:yyyy-MM-dd HH:mm} UTC.");
+            $"Signed in. Token valid until {expiresAt:yyyy-MM-dd HH:mm} UTC.", actor: user.UserName);
 
         var saved = await users.SaveChangesAsync(cancellationToken);
         if (!saved.Saved)
