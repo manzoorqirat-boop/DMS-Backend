@@ -4,6 +4,7 @@ using System.Text;
 using Dms.Application.Abstractions;
 using Dms.Domain.Entities;
 using Microsoft.IdentityModel.Tokens;
+using Dms.Domain.Common;
 
 namespace Dms.Api.Auth;
 
@@ -68,7 +69,7 @@ public sealed class JwtAccessTokenIssuer(IConfiguration configuration) : IAccess
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString("N")),
             new(ClaimTypes.Name, user.UserName),
             new("full_name", user.FullName),
-            new(JwtRegisteredClaimNames.Jti, Guid.CreateVersion7().ToString("N")),
+            new(JwtRegisteredClaimNames.Jti, Uuid7.NewGuid().ToString("N")),
         };
 
         var token = new JwtSecurityToken(
