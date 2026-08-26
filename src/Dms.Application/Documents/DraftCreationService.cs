@@ -6,6 +6,7 @@ using Dms.Application.Common;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Dms.Domain.Services;
+using Dms.Domain.Common;
 
 namespace Dms.Application.Documents;
 
@@ -82,7 +83,7 @@ public sealed class DraftCreationService(
                 $"The stored file for the active template of '{documentType.Code}' is missing.");
         }
 
-        var workingCopyKey = $"documents/{Guid.CreateVersion7():N}.docx";
+        var workingCopyKey = $"documents/{Uuid7.NewGuid():N}.docx";
 
         // Pattern resolution reads master data, so it happens before the transaction opens —
         // there's no reason to hold the sequence row lock while looking up configuration.
