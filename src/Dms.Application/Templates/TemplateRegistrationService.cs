@@ -4,6 +4,7 @@ using Dms.Application.Metadata;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Dms.Domain.Services;
+using Dms.Domain.Common;
 
 namespace Dms.Application.Templates;
 
@@ -86,7 +87,7 @@ public sealed class TemplateRegistrationService(
         // Keyed off a fresh UUIDv7 rather than the entity id (which the constructor can't be
         // given until the key already exists) or the version number (which a concurrent
         // upload may steal before the insert lands). Opaque and collision-free either way.
-        var storageKey = $"templates/{request.DocumentTypeId:N}/{Guid.CreateVersion7():N}.docx";
+        var storageKey = $"templates/{request.DocumentTypeId:N}/{Uuid7.NewGuid():N}.docx";
 
         // Which controls a template must declare is configuration now, resolved per document
         // type rather than read from a constant.
