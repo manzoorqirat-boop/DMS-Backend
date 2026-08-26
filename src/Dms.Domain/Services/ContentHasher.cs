@@ -20,5 +20,5 @@ namespace Dms.Domain.Services;
 public static class ContentHasher
 {
     public static string Hash(byte[] content) =>
-        Convert.ToHexStringLower(SHA256.HashData(content));
+        Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
 }
