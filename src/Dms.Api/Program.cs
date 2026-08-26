@@ -183,7 +183,17 @@ app.MapMetadataEndpoints();
 app.MapLifecycleEndpoints();
 app.MapDistributionEndpoints();
 app.MapNotificationEndpoints();
-app.MapEditingEndpoints();
+
+// Mapped only when a document server is configured, matching the conditional registration of
+// EditingService and its dependencies in AddInfrastructure. A route that exists but throws on
+// dependency injection is a worse answer than no route at all for a feature that is
+// deliberately switched off — and StartSessionAsync's own `editor_not_configured` guard can
+// only speak once the service resolves, which it can't here.
+if (!string.IsNullOrWhiteSpace(app.Configuration[Dms.Infrastructure.Editing.EditorConfig.UrlKey]))
+{
+    app.MapEditingEndpoints();
+}
+
 app.MapReviewEndpoints();
 app.MapAuditEndpoints();
 app.MapExportEndpoints();
