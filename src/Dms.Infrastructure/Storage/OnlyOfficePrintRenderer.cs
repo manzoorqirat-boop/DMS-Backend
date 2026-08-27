@@ -89,7 +89,7 @@ public sealed class OnlyOfficePrintRenderer(
     /// has headers gets the stamp prepended to each, so an existing letterhead survives.
     /// </para>
     /// </summary>
-    private static byte[] StampWatermark(byte[] docxBytes, string watermark, string scanCode)
+    private byte[] StampWatermark(byte[] docxBytes, string watermark, string scanCode)
     {
         using var output = new MemoryStream();
 
@@ -106,6 +106,20 @@ public sealed class OnlyOfficePrintRenderer(
                 .Select(e => e.FullName)
                 .ToHashSet(StringComparer.Ordinal);
 
+            // With no header part there is nowhere to put a per-page stamp, so the stamp goes
+            // into the body instead — once, at the top. Worse than a header, and said so out
+            // loud, but far better than handing someone a completely unmarked controlled copy.
+            // Templates produced against the current validator have no header, so this is the
+            // path that actually runs today rather than a defensive corner.
+            var stampBody = headerParts.Count == 0;
+
+            if (stampBody)
+            {
+                logger.LogWarning(
+                    "Template has no header part; the controlled-copy stamp will appear once at " +
+                    "the top of the document rather than on every page.");
+            }
+
             foreach (var entry in sourceArchive.Entries)
             {
                 var newEntry = target.CreateEntry(entry.FullName, CompressionLevel.Optimal);
@@ -114,28 +128,62 @@ public sealed class OnlyOfficePrintRenderer(
 
                 if (headerParts.Contains(entry.FullName))
                 {
-                    var stamped = PrependStampToHeader(entryStream, watermark, scanCode);
-                    newStream.Write(stamped);
+                    newStream.Write(PrependStampToHeader(entryStream, watermark, scanCode));
+                }
+                else if (stampBody && entry.FullName == "word/document.xml")
+                {
+                    newStream.Write(PrependStampToBody(entryStream, watermark, scanCode));
                 }
                 else
                 {
                     entryStream.CopyTo(newStream);
                 }
             }
-
-            // No header part at all: the stamp goes into the body as a leading paragraph. Less
-            // ideal than a header — it appears once rather than per page — but far better than
-            // an unmarked controlled copy, and it keeps this renderer working against the
-            // simple templates the validator accepts.
-            if (headerParts.Count == 0)
-            {
-                logger.LogWarning(
-                    "Template has no header part; the controlled-copy stamp will appear once at " +
-                    "the top of the document rather than on every page.");
-            }
         }
 
         return output.ToArray();
+    }
+
+    /// <summary>
+    /// Inserts the stamp as the first paragraph of the document body, for templates with no
+    /// header part to stamp instead.
+    /// </summary>
+    private static byte[] PrependStampToBody(Stream documentStream, string watermark, string scanCode)
+    {
+        var document = XDocument.Load(documentStream);
+        XNamespace w = WordNs;
+
+        var body = document.Root?.Element(w + "body");
+        if (body is null)
+        {
+            using var untouched = new MemoryStream();
+            document.Save(untouched, SaveOptions.DisableFormatting);
+            return untouched.ToArray();
+        }
+
+        body.AddFirst(StampParagraph(watermark, scanCode));
+
+        using var result = new MemoryStream();
+        document.Save(result, SaveOptions.DisableFormatting);
+        return result.ToArray();
+    }
+
+    /// <summary>The stamp itself: centred, bold, red, small. Shared by both placements.</summary>
+    private static XElement StampParagraph(string watermark, string scanCode)
+    {
+        XNamespace w = WordNs;
+
+        return new XElement(w + "p",
+            new XElement(w + "pPr",
+                new XElement(w + "jc", new XAttribute(w + "val", "center"))),
+            new XElement(w + "r",
+                new XElement(w + "rPr",
+                    new XElement(w + "b"),
+                    new XElement(w + "color", new XAttribute(w + "val", "C00000")),
+                    new XElement(w + "sz", new XAttribute(w + "val", "20"))),
+                new XElement(w + "t",
+                    new XAttribute(XNamespace.Xml + "space", "preserve"),
+                    $"{watermark}  |  {scanCode}")));
     }
 
     private static byte[] PrependStampToHeader(Stream headerStream, string watermark, string scanCode)
@@ -151,21 +199,7 @@ public sealed class OnlyOfficePrintRenderer(
             return buffer.ToArray();
         }
 
-        XNamespace w = WordNs;
-
-        var stampParagraph = new XElement(w + "p",
-            new XElement(w + "pPr",
-                new XElement(w + "jc", new XAttribute(w + "val", "center"))),
-            new XElement(w + "r",
-                new XElement(w + "rPr",
-                    new XElement(w + "b"),
-                    new XElement(w + "color", new XAttribute(w + "val", "C00000")),
-                    new XElement(w + "sz", new XAttribute(w + "val", "20"))),
-                new XElement(w + "t",
-                    new XAttribute(XNamespace.Xml + "space", "preserve"),
-                    $"{watermark}  |  {scanCode}")));
-
-        root.AddFirst(stampParagraph);
+        root.AddFirst(StampParagraph(watermark, scanCode));
 
         using var result = new MemoryStream();
         document.Save(result, SaveOptions.DisableFormatting);
