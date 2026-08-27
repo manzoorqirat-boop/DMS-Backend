@@ -47,6 +47,123 @@ public sealed class EditingService(
     /// rather than refusing. Losing your browser tab shouldn't cost you your own lock.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Opens a document read-only, for anyone who needs to read it rather than change it —
+    /// most importantly a reviewer or approver, who cannot meaningfully sign a document they
+    /// have not seen.
+    /// <para>
+    /// Takes <b>no check-out</b> and creates no <see cref="EditingSession"/> row. Reading is
+    /// not a mutually exclusive act: several reviewers may read the same document at once, and
+    /// none of them should block the author's edit lock or each other. It follows that this
+    /// works at any status, not just Draft — reviewers read documents that are precisely
+    /// <i>not</i> editable.
+    /// </para>
+    /// <para>
+    /// Because there is no session row, the file token is minted against the DOCUMENT id
+    /// rather than a session id. <see cref="IEditorTokenService"/> signs an opaque Guid and
+    /// doesn't care what it identifies; the read-only file endpoint interprets it as a
+    /// document. That avoids adding a column to EditingSession purely to mark rows that exist
+    /// only to be immediately ignored — and, practically, avoids a schema change on a
+    /// database created by EnsureCreated, where no migration path exists to apply one.
+    /// </para>
+    /// </summary>
+    public async Task<Result<ViewerLaunchView>> StartViewSessionAsync(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        if (!settings.IsConfigured)
+        {
+            return Error.Conflict(
+                "editor_not_configured",
+                "No document server is configured, so documents cannot be viewed in the browser.");
+        }
+
+        if (currentUser.UserName is not { } actor || string.IsNullOrWhiteSpace(actor))
+        {
+            return Error.Validation("actor_unknown", "The acting user could not be determined.");
+        }
+
+        var document = await documents.GetAsync(documentId, cancellationToken);
+        if (document is null)
+        {
+            return Error.NotFound("document_not_found", $"No document with id {documentId}.");
+        }
+
+        // DocumentView, not DocumentEdit: a reviewer who may sign a document but not author it
+        // still has to be able to read it. Requiring DocumentEdit here would have made the
+        // review step impossible for exactly the people it exists for.
+        var permitted = await access.HasPermissionAsync(
+            Permission.DocumentView, document.SiteId, document.DepartmentId, cancellationToken);
+
+        if (!permitted)
+        {
+            return Error.Validation(
+                "permission_denied",
+                $"{Permission.DocumentView} is required for this document's site and department.");
+        }
+
+        if (string.IsNullOrWhiteSpace(document.WorkingCopyKey))
+        {
+            return Error.NotFound(
+                "document_file_missing",
+                $"{document.DocumentNumber} has no stored file to display.");
+        }
+
+        var token = tokens.Issue(document.Id, clock.UtcNow.Add(settings.SessionLifetime));
+        var root = settings.CallbackBaseUrl.TrimEnd('/');
+
+        // The cache key must change whenever the content does, or the document server serves a
+        // reader the previous revision from its own cache. ApprovedContentHash is ideal once a
+        // document is approved — it is exactly the hash the signatures are bound to. Before
+        // that it is null, so a draft falls back to a per-minute key: still cached usefully
+        // within a reading session, but never stale for more than a minute while an author is
+        // actively editing.
+        var cacheKey = document.ApprovedContentHash is { Length: > 0 } hash
+            ? $"{document.Id:N}-{hash[..Math.Min(16, hash.Length)]}"
+            : $"{document.Id:N}-r{document.Revision}-{clock.UtcNow:yyyyMMddHHmm}";
+
+        return new ViewerLaunchView(
+            document.Id,
+            document.DocumentNumber,
+            document.Title,
+            $"{document.Revision:00}",
+            cacheKey,
+            settings.DocumentServerUrl,
+            $"{root}/api/public/editor/{token}/view-file",
+            actor);
+    }
+
+    /// <summary>
+    /// Serves a document's file to the document server for a read-only view.
+    /// <para>
+    /// Distinct from <see cref="GetFileForEditorAsync"/> because the token here identifies a
+    /// document, not a session — see the remarks on <see cref="StartViewSessionAsync"/>. There
+    /// is deliberately no matching callback: nothing this endpoint serves can be written back.
+    /// </para>
+    /// </summary>
+    public async Task<Result<(byte[] Content, string FileName)>> GetFileForViewerAsync(
+        string token,
+        CancellationToken cancellationToken)
+    {
+        if (tokens.Validate(token) is not { } documentId)
+        {
+            return Error.Validation("editor_token_invalid", "The viewing link is invalid or has expired.");
+        }
+
+        var document = await documents.GetAsync(documentId, cancellationToken);
+        if (document is null)
+        {
+            return Error.NotFound("document_not_found", "The document no longer exists.");
+        }
+
+        var content = await documentFiles.ReadAsync(document.WorkingCopyKey, cancellationToken);
+
+        return content is null
+            ? Error.NotFound("document_file_missing", "The stored file is missing.")
+            : Result<(byte[] Content, string FileName)>.Success(
+                (content, $"{document.DocumentNumber}.docx"));
+    }
+
     public async Task<Result<EditorLaunchView>> StartSessionAsync(
         Guid documentId,
         CancellationToken cancellationToken)
