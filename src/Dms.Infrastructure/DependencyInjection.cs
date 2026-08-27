@@ -81,7 +81,20 @@ public static class DependencyInjection
 
         // Stand-in: returns files unstamped and says so. Replace before any real controlled
         // copy is printed — see PassThroughPrintRenderer.
-        services.AddSingleton<IControlledPrintRenderer, PassThroughPrintRenderer>();
+        // Controlled-copy rendering follows the document server: with one configured, copies
+        // are stamped and flattened to PDF; without one, PassThroughPrintRenderer returns the
+        // file unstamped and reports IsWatermarked=false so the gap stays visible rather than
+        // being mistaken for a real controlled copy.
+        if (!string.IsNullOrWhiteSpace(configuration[EditorConfig.UrlKey]))
+        {
+            services.AddHttpClient(OnlyOfficePrintRenderer.ClientName,
+                client => client.Timeout = TimeSpan.FromMinutes(2));
+            services.AddScoped<IControlledPrintRenderer, OnlyOfficePrintRenderer>();
+        }
+        else
+        {
+            services.AddSingleton<IControlledPrintRenderer, PassThroughPrintRenderer>();
+        }
 
         var maxAttempts = int.TryParse(configuration[$"{SigningPolicy.SectionName}:MaxFailedAttempts"], out var parsed)
             ? parsed
