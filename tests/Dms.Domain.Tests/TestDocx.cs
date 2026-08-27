@@ -30,6 +30,11 @@ internal static class TestDocx
     /// </param>
     /// <param name="includeSettings">False omits word/settings.xml entirely.</param>
     /// <param name="includeEditableRange">False omits the permStart/permEnd pair.</param>
+    /// <param name="lockControls">
+    /// True puts w:lock="sdtContentLocked" on every content control — the editor-agnostic way
+    /// of protecting metadata, and the one OnlyOffice honours. A template built this way needs
+    /// no document protection at all.
+    /// </param>
     /// <param name="splitRuns">
     /// True splits each placeholder across two runs, which is what Word does after an edit or
     /// spellcheck. The single most likely thing to break the writer and verifier.
@@ -39,7 +44,8 @@ internal static class TestDocx
         bool enforceProtection = true,
         bool includeSettings = true,
         bool includeEditableRange = true,
-        bool splitRuns = false)
+        bool splitRuns = false,
+        bool lockControls = false)
     {
         var body = new StringBuilder();
 
@@ -50,7 +56,7 @@ internal static class TestDocx
 
         foreach (var tag in tags)
         {
-            body.Append(ContentControl(tag, splitRuns));
+            body.Append(ContentControl(tag, splitRuns, lockControls));
         }
 
         if (includeEditableRange)
@@ -122,13 +128,18 @@ internal static class TestDocx
         return archive.GetEntry(partName) is not null;
     }
 
-    private static string ContentControl(string tag, bool splitRuns)
+    private static string ContentControl(string tag, bool splitRuns, bool locked = false)
     {
         var placeholder = splitRuns
             ? $"""<w:r><w:t>{tag[..1]}</w:t></w:r><w:r><w:t>{tag[1..]}</w:t></w:r>"""
             : $"""<w:r><w:t>{tag}</w:t></w:r>""";
 
-        return $"""<w:sdt><w:sdtPr><w:tag w:val="{tag}"/></w:sdtPr><w:sdtContent><w:p>{placeholder}</w:p></w:sdtContent></w:sdt>""";
+        // Unlocked by default so the default fixture exercises the document-protection branch
+        // of ProtectsMetadataFields. Pass lockControls: true to exercise the per-control-lock
+        // branch instead — the one OnlyOffice actually honours.
+        var lockElement = locked ? """<w:lock w:val="sdtContentLocked"/>""" : "";
+
+        return $"""<w:sdt><w:sdtPr><w:tag w:val="{tag}"/>{lockElement}</w:sdtPr><w:sdtContent><w:p>{placeholder}</w:p></w:sdtContent></w:sdt>""";
     }
 
     private static byte[] Zip(IReadOnlyDictionary<string, string> entries)
