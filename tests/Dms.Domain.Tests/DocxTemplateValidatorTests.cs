@@ -49,6 +49,52 @@ public class DocxTemplateValidatorTests
     }
 
     [Fact]
+    public void Locked_content_controls_pass_without_document_protection()
+    {
+        // The OnlyOffice-authored case. Every metadata control is individually locked, so the
+        // metadata can't be overwritten and the body needs no exception range carved out of a
+        // document-wide lock. This is the shape that previously failed validation while being
+        // the only shape that actually worked in the editor.
+        var result = DocxTemplateValidator.Validate(
+            TestDocx.Build(
+                TemplateFieldTags.Required,
+                enforceProtection: false,
+                includeEditableRange: false,
+                lockControls: true));
+
+        Assert.True(result.IsValid, string.Join(" | ", result.Issues));
+    }
+
+    [Fact]
+    public void Unlocked_controls_without_document_protection_fail()
+    {
+        var result = DocxTemplateValidator.Validate(
+            TestDocx.Build(
+                TemplateFieldTags.Required,
+                enforceProtection: false,
+                includeEditableRange: false,
+                lockControls: false));
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Issues, i => i.Contains("protected", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Failure_message_names_the_unlocked_controls()
+    {
+        // Naming what to fix beats saying only that something is wrong — whoever built the
+        // template needs to know which control to go back to.
+        var result = DocxTemplateValidator.Validate(
+            TestDocx.Build(
+                TemplateFieldTags.Required,
+                enforceProtection: false,
+                includeEditableRange: false,
+                lockControls: false));
+
+        Assert.Contains(result.Issues, i => i.Contains(TemplateFieldTags.DocumentNumber, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Protected_document_with_no_editable_range_fails()
     {
         // Protecting everything with no exception leaves the author no body to write in.
