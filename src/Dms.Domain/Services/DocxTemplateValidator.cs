@@ -11,10 +11,10 @@ namespace Dms.Domain.Services;
 /// <list type="number">
 ///   <item>every system-populated metadata field (<see cref="TemplateFieldTags.Required"/>)
 ///   is present as a content control, so the merge step has somewhere to write; and</item>
-///   <item>document protection is genuinely enforced, with an actual editable range carved
-///   out for the body — not just a template that looks locked in the Word UI while every
-///   region stays editable underneath once "Restrict Editing" is closed without being
-///   applied.</item>
+///   <item>those metadata fields are actually protected from being edited by the author —
+///   by per-control locks or by enforced document protection with a body exception, either
+///   being sufficient. See <c>ProtectsMetadataFields</c> for why this checks the property
+///   rather than one particular mechanism.</item>
 /// </list>
 /// <para>
 /// Pure and I/O-free beyond reading the bytes it's handed — no blob storage, no HTTP calls.
@@ -72,21 +72,20 @@ public static class DocxTemplateValidator
                 "a matching Tag value.");
         }
 
-        if (!HasEnforcedDocumentProtection(settingsXml))
+        // The invariant that actually matters: an author must not be able to overwrite the
+        // system-populated metadata. Two different mechanisms satisfy it, and either is
+        // accepted — see the remarks on ProtectsMetadataFields for why requiring one specific
+        // mechanism turned out to be the wrong test.
+        if (!ProtectsMetadataFields(documentXml, settingsXml, requiredTags, out var unlockedTags))
         {
             issues.Add(
-                "Document protection isn't enforced (Restrict Editing > 'Yes, Start Enforcing " +
-                "Protection' was never applied, or the file has no word/settings.xml at all). " +
-                "Without this, the header/footer/metadata lock has no effect once the file " +
-                "leaves Word.");
-        }
-
-        if (!HasUnrestrictedRange(documentXml))
-        {
-            issues.Add(
-                "No unrestricted editing range found (no matching w:permStart/w:permEnd " +
-                "pair). Protecting the whole document with no exception means the author has " +
-                "no body left to write in.");
+                "Metadata fields aren't protected from editing. Either lock each metadata " +
+                "content control individually (Developer > Properties > \"Contents cannot be " +
+                "edited\"), or enforce document protection with an editing range for the body " +
+                "(Restrict Editing > 'Yes, Start Enforcing Protection'). " +
+                (unlockedTags.Count > 0
+                    ? $"Currently unlocked: {string.Join(", ", unlockedTags)}."
+                    : "Neither was found in this file."));
         }
 
         return issues.Count == 0
@@ -161,6 +160,100 @@ public static class DocxTemplateValidator
     }
 
     /// <summary>At least one well-formed w:permStart/w:permEnd pair, matched by w:id.</summary>
+    /// <summary>
+    /// Whether the template stops an author editing the system-populated metadata fields.
+    /// <para>
+    /// Accepts <b>either</b> of two mechanisms, because they achieve the same thing and
+    /// different editors support them differently:
+    /// </para>
+    /// <list type="number">
+    ///   <item><b>Per-control locks.</b> Every required content control carries
+    ///   <c>w:lock</c> = <c>sdtContentLocked</c> or <c>sdtLocked</c>. The body stays freely
+    ///   editable because nothing is locked document-wide.</item>
+    ///   <item><b>Document protection with an exception range.</b> Enforced
+    ///   <c>w:documentProtection</c> plus a matching <c>w:permStart</c>/<c>w:permEnd</c> pair
+    ///   carving the body out. This is what Word's Restrict Editing produces.</item>
+    /// </list>
+    /// <para>
+    /// This previously demanded mechanism 2 exclusively, which was a mistake worth recording:
+    /// it tested <i>how</i> a template was protected rather than <i>whether</i> it was.
+    /// Word honours document protection with its exceptions faithfully, but OnlyOffice — which
+    /// is the authoring tool here, precisely because URS #13 forbids the file reaching a
+    /// client PC — applies the restriction and ignores the exception. A template built for
+    /// mechanism 2 therefore validated cleanly and then left the author unable to type
+    /// anywhere, which is the opposite of what the check existed to guarantee.
+    /// </para>
+    /// <para>
+    /// Mechanism 1 is honoured by both editors and is the better fit now that documents are
+    /// authored server-side; mechanism 2 stays accepted so templates already built in Word
+    /// don't suddenly fail. <paramref name="unlockedTags"/> names the controls missing a lock,
+    /// so the message can say what to fix rather than only that something is wrong.
+    /// </para>
+    /// </summary>
+    private static bool ProtectsMetadataFields(
+        XDocument documentXml,
+        XDocument? settingsXml,
+        IReadOnlyList<string> requiredTags,
+        out IReadOnlyList<string> unlockedTags)
+    {
+        unlockedTags = FindUnlockedRequiredControls(documentXml, requiredTags);
+
+        // Mechanism 1: every required control individually locked. An empty required-tag list
+        // trivially satisfies this, which is correct — there's no metadata to protect.
+        if (unlockedTags.Count == 0)
+        {
+            return true;
+        }
+
+        // Mechanism 2: Word-style document protection with a body exception.
+        return HasEnforcedDocumentProtection(settingsXml) && HasUnrestrictedRange(documentXml);
+    }
+
+    /// <summary>
+    /// Required tags whose content control carries no edit lock. A control that isn't present
+    /// at all is not reported here — the missing-controls check already covers that, and
+    /// naming it twice would just make the failure harder to read.
+    /// </summary>
+    private static IReadOnlyList<string> FindUnlockedRequiredControls(
+        XDocument documentXml,
+        IReadOnlyList<string> requiredTags)
+    {
+        XName sdt = XName.Get("sdt", WordNs);
+        XName sdtPr = XName.Get("sdtPr", WordNs);
+        XName tag = XName.Get("tag", WordNs);
+        XName lockEl = XName.Get("lock", WordNs);
+        XName val = XName.Get("val", WordNs);
+
+        var lockedTags = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var element in documentXml.Descendants(sdt))
+        {
+            var properties = element.Element(sdtPr);
+            var tagValue = properties?.Element(tag)?.Attribute(val)?.Value;
+            if (string.IsNullOrEmpty(tagValue))
+            {
+                continue;
+            }
+
+            var lockValue = properties?.Element(lockEl)?.Attribute(val)?.Value;
+
+            // sdtContentLocked: contents can't be edited. sdtLocked: the control can't be
+            // deleted. contentLocked is the pair of both. Anything that locks the CONTENT
+            // counts; a control that's merely undeletable still lets its text be overwritten,
+            // so "sdtLocked" alone deliberately does not.
+            if (lockValue is "sdtContentLocked" or "contentLocked")
+            {
+                lockedTags.Add(tagValue);
+            }
+        }
+
+        var presentTags = FindContentControlTags(documentXml);
+
+        return requiredTags
+            .Where(t => presentTags.Contains(t) && !lockedTags.Contains(t))
+            .ToList();
+    }
+
     private static bool HasUnrestrictedRange(XDocument documentXml)
     {
         XName permStart = XName.Get("permStart", WordNs);
