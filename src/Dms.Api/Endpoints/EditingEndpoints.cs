@@ -1,4 +1,5 @@
 using Dms.Application.Editing;
+using Dms.Infrastructure.Storage;
 
 namespace Dms.Api.Endpoints;
 
@@ -36,6 +37,14 @@ public static class EditingEndpoints
         // AllowAnonymous is load-bearing here: the fallback authorization policy denies
         // everything by default, and the document server is a separate process with no user
         // session. The signed, expiring token in the path is its only credential.
+        // Read-only view. Separate from /edit because it takes no check-out and works at any
+        // status — a reviewer reads documents that are deliberately not editable.
+        documents.MapPost("/{id:guid}/view", async (
+            EditingService service,
+            Guid id,
+            CancellationToken ct) =>
+            (await service.StartViewSessionAsync(id, ct)).ToHttpResult());
+
         var public_ = app.MapGroup("/api/public/editor")
             .WithTags("Editing (document server)")
             .AllowAnonymous();
@@ -46,6 +55,50 @@ public static class EditingEndpoints
             CancellationToken ct) =>
         {
             var result = await service.GetFileForEditorAsync(token, ct);
+
+            return result.ToHttpResult(file => Results.File(
+                file.Content,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                file.FileName));
+        });
+
+        // Staging source for the PDF conversion service. Token-guarded and short-lived (five
+        // minutes), serving a file that is deleted the moment conversion finishes — see
+        // OnlyOfficePrintRenderer.ConvertToPdfAsync.
+        public_.MapGet("/{token}/print-source", async (
+            IControlledPrintRenderer renderer,
+            IEditorTokenService tokens,
+            string token,
+            CancellationToken ct) =>
+        {
+            if (renderer is not OnlyOfficePrintRenderer onlyOffice)
+            {
+                return Results.NotFound();
+            }
+
+            if (tokens.Validate(token) is not { } conversionId)
+            {
+                return Results.NotFound();
+            }
+
+            var content = await onlyOffice.ReadStagedAsync(conversionId, ct);
+
+            return content is null
+                ? Results.NotFound()
+                : Results.File(
+                    content,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    $"{conversionId:N}.docx");
+        });
+
+        // Read-only counterpart of /{token}/file. No callback exists for this token, by
+        // design: nothing served here can be written back.
+        public_.MapGet("/{token}/view-file", async (
+            EditingService service,
+            string token,
+            CancellationToken ct) =>
+        {
+            var result = await service.GetFileForViewerAsync(token, ct);
 
             return result.ToHttpResult(file => Results.File(
                 file.Content,
