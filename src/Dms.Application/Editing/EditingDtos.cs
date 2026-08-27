@@ -60,3 +60,22 @@ public sealed record EditorCallbackResult(int Error, string? Message)
 
     public static EditorCallbackResult Rejected(string message) => new(1, message);
 }
+
+/// <summary>
+/// Everything needed to mount the editor in read-only mode, for a reviewer or approver who
+/// must read a document before signing it.
+/// <para>
+/// Deliberately carries no callback URL and no session id: a viewing session takes no
+/// check-out and can never write. Two people reading the same document at once is normal and
+/// must not block either of them, nor block the author from holding the edit lock.
+/// </para>
+/// </summary>
+public sealed record ViewerLaunchView(
+    Guid DocumentId,
+    string DocumentNumber,
+    string Title,
+    string Revision,
+    string DocumentKey,
+    string DocumentServerUrl,
+    string FileUrl,
+    string ViewerUserName);
