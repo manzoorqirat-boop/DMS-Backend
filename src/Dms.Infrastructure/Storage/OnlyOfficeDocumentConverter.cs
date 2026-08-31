@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Xml.Linq;
 using Dms.Application.Abstractions;
 using Microsoft.Extensions.Logging;
 
@@ -73,6 +74,10 @@ public sealed class OnlyOfficeDocumentConverter(
                 ["key"] = conversionId.ToString("N"),
                 ["title"] = $"{conversionId:N}.docx",
                 ["url"] = sourceUrl,
+                // Without this the service answers in XML (<FileResult><FileUrl>…), its
+                // default. Asking is one line; the parser still handles both, because a
+                // response format changing under us should not break conversion twice.
+                ["outputformat"] = "json",
             };
 
             // OnlyOffice rejects unsigned requests whenever JWT_ENABLED is true on the document
@@ -111,6 +116,11 @@ public sealed class OnlyOfficeDocumentConverter(
 
                 message.Headers.TryAddWithoutValidation("Authorization", $"Bearer {headerToken}");
 
+                // ConvertService.ashx answers in XML unless JSON is explicitly requested — a
+                // detail that cost a round trip to discover, because the XML it returned was a
+                // perfectly successful conversion that the JSON parser rejected out of hand.
+                message.Headers.TryAddWithoutValidation("Accept", "application/json");
+
                 var response = await client.SendAsync(message, cancellationToken);
 
                 // Read as text first, deliberately. The conversion service answers with JSON
@@ -127,33 +137,21 @@ public sealed class OnlyOfficeDocumentConverter(
                         + $"{response.ReasonPhrase} from {conversionUrl}. Body: {Excerpt(raw)}");
                 }
 
-                JsonElement payload;
-                try
-                {
-                    payload = JsonSerializer.Deserialize<JsonElement>(raw);
-                }
-                catch (JsonException)
-                {
-                    throw new InvalidOperationException(
-                        $"The document server replied to {conversionUrl} with something that "
-                        + $"isn't JSON, which usually means the request never reached the "
-                        + $"conversion service — a proxy error page, a redirect, or the wrong "
-                        + $"URL. Body: {Excerpt(raw)}");
-                }
+                // Parsed from either format. Asking for JSON above should make this moot, but
+                // the XML path stays because the Accept header is a request, not a guarantee —
+                // and a version that ignores it should not break conversion again.
+                var result = ParseConversionResponse(raw, conversionUrl);
 
-                if (payload.TryGetProperty("error", out var error))
+                if (result.Error is { } errorCode)
                 {
                     throw new InvalidOperationException(
-                        $"The document server rejected the conversion (error {error}). Common "
+                        $"The document server rejected the conversion (error {errorCode}). Common "
                         + "causes: the staging URL isn't reachable from the document server "
-                        + "(check DocumentServer:CallbackBaseUrl), or JWT is enabled there and "
-                        + "the request isn't signed.");
+                        + "(check DocumentServer:CallbackBaseUrl), or the JWT secret doesn't "
+                        + $"match its JWT_SECRET. Body: {Excerpt(raw)}");
                 }
 
-                if (payload.TryGetProperty("endConvert", out var done)
-                    && done.ValueKind == JsonValueKind.True
-                    && payload.TryGetProperty("fileUrl", out var fileUrl)
-                    && fileUrl.GetString() is { Length: > 0 } address)
+                if (result.FileUrl is { Length: > 0 } address)
                 {
                     return await client.GetByteArrayAsync(address, cancellationToken);
                 }
@@ -179,6 +177,126 @@ public sealed class OnlyOfficeDocumentConverter(
             }
         }
     }
+
+    /// <summary>
+    /// Reads a conversion response in either of the two shapes the service produces.
+    /// <para>
+    /// JSON when asked for it, XML otherwise: <c>&lt;FileResult&gt;&lt;FileUrl&gt;…&lt;/FileUrl&gt;&lt;/FileResult&gt;</c>,
+    /// or <c>&lt;FileResult&gt;&lt;Error&gt;-4&lt;/Error&gt;&lt;/FileResult&gt;</c> on failure.
+    /// Both are handled rather than only the requested one, because the Accept header is a
+    /// request rather than a guarantee.
+    /// </para>
+    /// </summary>
+    private static (string? FileUrl, string? Error) ParseConversionResponse(string raw, string conversionUrl)
+    {
+        var trimmed = raw.TrimStart();
+
+        if (trimmed.StartsWith('{'))
+        {
+            var payload = JsonSerializer.Deserialize<JsonElement>(trimmed);
+
+            var error = payload.TryGetProperty("error", out var e) ? e.ToString() : null;
+
+            // endConvert false means "still working" — not an error, and not a result either.
+            var url = payload.TryGetProperty("endConvert", out var done)
+                      && done.ValueKind == JsonValueKind.True
+                      && payload.TryGetProperty("fileUrl", out var f)
+                ? f.GetString()
+                : null;
+
+            return (url, error);
+        }
+
+        if (trimmed.StartsWith('<'))
+        {
+            var document = XDocument.Parse(trimmed);
+            var root = document.Root;
+
+            // Element names are matched case-insensitively: the service has shipped both
+            // FileUrl and fileUrl across versions, and a casing change should not read as a
+            // failed conversion.
+            string? Value(string name) => root?
+                .Elements()
+                .FirstOrDefault(x => string.Equals(x.Name.LocalName, name, StringComparison.OrdinalIgnoreCase))?
+                .Value;
+
+            return (Value("FileUrl"), Value("Error"));
+        }
+
+        throw new InvalidOperationException(
+            $"The document server replied to {conversionUrl} with neither JSON nor XML, which "
+            + "usually means the request never reached the conversion service — a proxy error "
+            + $"page, a redirect, or the wrong URL. Body: {Excerpt(raw)}");
+    }
+
+    /// <summary>
+    /// Reads the conversion service's reply in either shape it uses.
+    /// <para>
+    /// It answers in XML by default (<c>&lt;FileResult&gt;&lt;FileUrl&gt;…</c>) and in JSON when
+    /// asked. The request asks for JSON, so the XML branch should be dead — it stays because
+    /// assuming that field is honoured is exactly what produced the confusing failure first
+    /// time round: a perfectly successful conversion reported as "the request never reached the
+    /// conversion service", purely because the reply was XML and the parser only spoke JSON.
+    /// </para>
+    /// </summary>
+    private static ConversionResponse ParseConversionResponse(string raw, string conversionUrl)
+    {
+        var trimmed = raw.TrimStart();
+
+        if (trimmed.StartsWith('{'))
+        {
+            try
+            {
+                var payload = JsonSerializer.Deserialize<JsonElement>(raw);
+
+                var error = payload.TryGetProperty("error", out var e) ? e.ToString() : null;
+                var url = payload.TryGetProperty("fileUrl", out var f) ? f.GetString() : null;
+                var done = payload.TryGetProperty("endConvert", out var d)
+                           && d.ValueKind == JsonValueKind.True;
+
+                return new ConversionResponse(error, done ? url : null);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException(
+                    $"The document server's JSON reply from {conversionUrl} could not be read: "
+                    + $"{ex.Message}. Body: {Excerpt(raw)}");
+            }
+        }
+
+        if (trimmed.StartsWith('<'))
+        {
+            try
+            {
+                var root = XDocument.Parse(raw).Root;
+
+                var error = root?.Element("Error")?.Value;
+
+                // XDocument decodes the &amp; entities, which matters: the cache URL carries
+                // md5, expires and filename parameters, and a still-encoded ampersand would
+                // collapse them into one malformed parameter.
+                var url = root?.Element("FileUrl")?.Value;
+
+                return new ConversionResponse(
+                    string.IsNullOrWhiteSpace(error) ? null : error,
+                    string.IsNullOrWhiteSpace(url) ? null : url);
+            }
+            catch (System.Xml.XmlException ex)
+            {
+                throw new InvalidOperationException(
+                    $"The document server's XML reply from {conversionUrl} could not be read: "
+                    + $"{ex.Message}. Body: {Excerpt(raw)}");
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"The document server replied to {conversionUrl} with neither JSON nor XML, which "
+            + "usually means the request never reached the conversion service — a proxy error "
+            + $"page, a redirect, or the wrong URL. Body: {Excerpt(raw)}");
+    }
+
+    /// <summary>Either an error code or a finished file URL; never usefully both.</summary>
+    private sealed record ConversionResponse(string? Error, string? FileUrl);
 
     /// <summary>
     /// Trims a response body to something readable in an error message and a log line. An
