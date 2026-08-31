@@ -21,6 +21,8 @@ public sealed class EditorSettings(IConfiguration configuration) : IEditorSettin
 
     public string CallbackBaseUrl { get; } = configuration[EditorConfig.CallbackBaseUrlKey] ?? "";
 
+    public string TokenSecret { get; } = configuration[EditorConfig.TokenSecretKey] ?? "";
+
     public TimeSpan SessionLifetime { get; } =
         TimeSpan.FromMinutes(Math.Clamp(configuration.GetValue(EditorConfig.SessionMinutesKey, 60), 5, 480));
 
