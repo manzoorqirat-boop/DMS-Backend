@@ -130,6 +130,14 @@ public enum AuditAction
     RoleAssigned,
     RoleRevoked,
 
+    /// <summary>
+    /// The organisation's password policy was changed. Its own action rather than a reused
+    /// role event: loosening password rules is a distinct, separately-reviewable act, and an
+    /// inspector looking for "who weakened the credential policy and when" should not have to
+    /// find it filed under role permissions.
+    /// </summary>
+    PasswordPolicyChanged,
+
     // Configuration. A numbering pattern change alters every number issued afterwards, so it
     // belongs in the trail alongside the documents it will shape.
     NumberingRuleCreated,
