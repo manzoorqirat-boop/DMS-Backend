@@ -113,6 +113,20 @@ public static class DocumentEndpoints
         // Inspection only. This does not become the author's editing path — that's the
         // document server in Phase 3, precisely because URS Functions #13 forbids the real
         // file reaching a client PC.
+        // The approved artefact, with its signature manifest. Generated on first request and
+        // cached — see ApprovedPdfService for why this isn't produced at the moment of
+        // approval.
+        group.MapGet("/{id:guid}/approved-pdf", async (
+            ApprovedPdfService service,
+            Guid id,
+            CancellationToken ct) =>
+        {
+            var result = await service.GetOrCreateAsync(id, ct);
+
+            return result.ToHttpResult(file =>
+                Results.File(file.Content, "application/pdf", file.FileName));
+        });
+
         group.MapGet("/{id:guid}/working-copy", async (
             DraftCreationService service,
             Guid id,
