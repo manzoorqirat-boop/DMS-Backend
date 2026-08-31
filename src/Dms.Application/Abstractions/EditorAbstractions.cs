@@ -67,3 +67,26 @@ public interface IEditorSettings
     /// <summary>True when a document server is actually configured.</summary>
     bool IsConfigured { get; }
 }
+
+/// <summary>
+/// Converts an Office document to PDF.
+/// <para>
+/// Separate from <see cref="IControlledPrintRenderer"/> because the two answer different
+/// questions: the renderer decides what a controlled copy should look like (watermark, scan
+/// code), while this only changes format. Keeping them apart means the approved-PDF path
+/// doesn't inherit watermarking it must not have — an approved record is not a controlled
+/// copy, and stamping it "CONTROLLED COPY 3 OF 5" would be actively wrong.
+/// </para>
+/// </summary>
+public interface IDocumentConverter
+{
+    /// <summary>
+    /// Returns PDF bytes. Throws rather than returning the source unconverted: a caller that
+    /// asked for a PDF and silently received a .docx would store it under a .pdf key and only
+    /// discover the problem when someone tried to open it.
+    /// </summary>
+    Task<byte[]> ToPdfAsync(byte[] docx, CancellationToken cancellationToken);
+
+    /// <summary>False when no document server is configured, so callers can degrade honestly.</summary>
+    bool IsAvailable { get; }
+}
