@@ -1,6 +1,7 @@
 using Dms.Application.Abstractions;
 using Dms.Application.Common;
 using Dms.Domain.Enums;
+using Dms.Domain.Services;
 
 namespace Dms.Application.Auth;
 
@@ -16,6 +17,7 @@ namespace Dms.Application.Auth;
 /// </summary>
 public sealed class AuthService(
     IUserRepository users,
+    IPasswordPolicyRepository passwordPolicies,
     IAccessTokenIssuer tokens,
     IAuthPolicy policy,
     IAuditTrail audit,
@@ -91,6 +93,28 @@ public sealed class AuthService(
 
         user.RegisterSuccessfulLogin(now);
 
+        // Expiry is evaluated at login rather than by a sweep: a password that expired last
+        // night matters at the moment someone tries to use it, and nowhere else. Setting the
+        // flag on the entity (rather than only reporting it) means the requirement survives
+        // the user closing the tab and coming back.
+        var passwordPolicy = await passwordPolicies.GetAsync(cancellationToken);
+        var expired = PasswordPolicyValidator.HasExpired(user.PasswordLastChanged, passwordPolicy, now);
+
+        if (expired && !user.MustChangePassword)
+        {
+            user.RequirePasswordChange();
+
+            audit.Record(
+                AuditAction.UserPasswordChanged, EntityType, user.Id, user.UserName,
+                $"Password expired after {passwordPolicy.ExpiryDays} days; change required before further use.",
+                actor: user.UserName);
+        }
+
+        var mustChange = user.MustChangePassword;
+        var changeReason = mustChange
+            ? (expired ? "password_expired" : "new_account")
+            : null;
+
         var expiresAt = now.Add(policy.TokenLifetime);
         var token = tokens.Issue(user, expiresAt);
 
@@ -110,7 +134,9 @@ public sealed class AuthService(
             user.UserName,
             user.FullName,
             user.Department,
-            user.Designation));
+            user.Designation,
+            mustChange,
+            changeReason));
     }
 
     private static Error InvalidCredentials() =>
