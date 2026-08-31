@@ -200,6 +200,19 @@ app.MapNotificationEndpoints();
 if (!string.IsNullOrWhiteSpace(app.Configuration[Dms.Infrastructure.Editing.EditorConfig.UrlKey]))
 {
     app.MapEditingEndpoints();
+
+    // Mapped under the same condition, which is not ideal and is worth knowing about: desktop
+    // Word needs no document server at all, yet is gated on one here because EditingService
+    // itself is — it depends on IEditorTokenService (for the signed WebDAV token) and
+    // IEditorSettings (for CallbackBaseUrl), and both are registered only when
+    // DocumentServer:Url is set. So an installation that wants ONLY desktop Word must still
+    // configure a document server it never uses.
+    //
+    // Decoupling means splitting the editor abstractions in two — token/settings, needed by
+    // both paths, from the content fetcher, needed only by the OnlyOffice callback. Worth
+    // doing if desktop-only deployments become real; not worth the churn while every
+    // deployment runs a document server anyway.
+    app.MapWebDavEndpoints();
 }
 
 app.MapReviewEndpoints();
