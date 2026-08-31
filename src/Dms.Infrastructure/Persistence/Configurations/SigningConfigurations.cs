@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dms.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -26,6 +27,19 @@ public class DmsUserConfiguration : IEntityTypeConfiguration<DmsUser>
         builder.Property(x => x.Designation).HasMaxLength(200).IsRequired();
         builder.Property(x => x.Email).HasMaxLength(320);
         builder.Property(x => x.PasswordHash).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.EmployeeId).HasMaxLength(64);
+
+        // Stored as jsonb through an explicit conversion, for the same reason
+        // DocumentTemplate.ValidationIssues is: an interface-typed collection is not something
+        // to leave EF's primitive-collection inference to guess at. Block-bodied lambdas would
+        // not compile here — HasConversion's two-lambda form is expression-tree only — so
+        // every optional argument is supplied explicitly.
+        builder.Property(x => x.PasswordHistory)
+            .HasConversion(
+                v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+                v => (IReadOnlyList<string>)(JsonSerializer.Deserialize<List<string>>(v, (JsonSerializerOptions?)null) ?? new List<string>()))
+            .HasColumnType("jsonb")
+            .IsRequired();
 
         builder.HasIndex(x => x.UserName).IsUnique().HasDatabaseName("ux_users_user_name");
     }
@@ -111,5 +125,23 @@ public class ElectronicSignatureConfiguration : IEntityTypeConfiguration<Electro
 
         builder.HasIndex(x => new { x.DocumentId, x.SignedAt })
             .HasDatabaseName("ix_electronic_signatures_document_signed");
+    }
+}
+
+
+/// <summary>
+/// Exactly one row is expected — the organisation's single password policy. Not enforced with
+/// a check constraint because a second row would be harmless (the service reads the first and
+/// seeds one if absent), and a constraint that can never legitimately fire is noise.
+/// </summary>
+public class PasswordPolicyConfiguration : IEntityTypeConfiguration<PasswordPolicy>
+{
+    public void Configure(EntityTypeBuilder<PasswordPolicy> builder)
+    {
+        builder.ToTable("password_policies");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).ValueGeneratedNever();
+
+        builder.Property(x => x.UpdatedBy).HasMaxLength(128).IsRequired();
     }
 }
