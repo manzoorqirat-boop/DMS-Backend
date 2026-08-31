@@ -77,12 +77,14 @@ public static class EditingEndpoints
         // minutes), serving a file that is deleted the moment conversion finishes — see
         // OnlyOfficePrintRenderer.ConvertToPdfAsync.
         public_.MapGet("/{token}/print-source", async (
-            IControlledPrintRenderer renderer,
+            IDocumentConverter converter,
             IEditorTokenService tokens,
             string token,
             CancellationToken ct) =>
         {
-            if (renderer is not OnlyOfficePrintRenderer onlyOffice)
+            // Staging now belongs to the converter, which both the print renderer and the
+            // approved-PDF export share.
+            if (converter is not OnlyOfficeDocumentConverter onlyOffice)
             {
                 return Results.NotFound();
             }
