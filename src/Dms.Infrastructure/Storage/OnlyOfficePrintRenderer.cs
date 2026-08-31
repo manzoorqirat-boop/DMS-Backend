@@ -1,6 +1,4 @@
 using System.IO.Compression;
-using System.Net.Http.Json;
-using System.Text.Json;
 using System.Xml.Linq;
 using Dms.Application.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -38,20 +36,11 @@ namespace Dms.Infrastructure.Storage;
 /// </para>
 /// </summary>
 public sealed class OnlyOfficePrintRenderer(
-    IHttpClientFactory httpClientFactory,
     IEditorSettings settings,
-    IEditorTokenService tokens,
-    IDocumentFileStore files,
+    IDocumentConverter converter,
     ILogger<OnlyOfficePrintRenderer> logger) : IControlledPrintRenderer
 {
-    public const string ClientName = "onlyoffice-converter";
 
-    /// <summary>
-    /// Prefix for the short-lived staging copies the conversion service fetches. Kept distinct
-    /// from real document keys so a stray staging file can never be mistaken for a working
-    /// copy, and so it is obvious what to sweep if one is ever orphaned.
-    /// </summary>
-    public const string StagingPrefix = "print-staging/";
 
     private const string PdfContentType = "application/pdf";
     private const string WordNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -230,83 +219,11 @@ public sealed class OnlyOfficePrintRenderer(
     /// this system exists to control.
     /// </para>
     /// </summary>
-    private async Task<byte[]> ConvertToPdfAsync(byte[] stampedDocx, CancellationToken cancellationToken)
-    {
-        var client = httpClientFactory.CreateClient(ClientName);
-        var conversionUrl = $"{settings.DocumentServerUrl.TrimEnd('/')}/ConvertService.ashx";
-
-        // A per-conversion id, used as both the staging key and the document server's cache
-        // key. Reusing one would return the previous copy's PDF — carrying the previous copy's
-        // scan code, which is the one mistake a controlled-copy renderer must never make.
-        var conversionId = Guid.NewGuid();
-        var stagingKey = $"{StagingPrefix}{conversionId:N}.docx";
-
-        try
-        {
-            await files.SaveAsync(stagingKey, stampedDocx, cancellationToken);
-
-            var token = tokens.Issue(conversionId, DateTimeOffset.UtcNow.AddMinutes(5));
-            var sourceUrl = $"{settings.CallbackBaseUrl.TrimEnd('/')}/api/public/editor/{token}/print-source";
-
-            var request = new
-            {
-                async = false,
-                filetype = "docx",
-                outputtype = "pdf",
-                key = conversionId.ToString("N"),
-                title = $"{conversionId:N}.docx",
-                url = sourceUrl,
-            };
-
-            for (var attempt = 0; attempt < 30; attempt++)
-            {
-                var response = await client.PostAsJsonAsync(conversionUrl, request, cancellationToken);
-                response.EnsureSuccessStatusCode();
-
-                var payload = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
-
-                if (payload.TryGetProperty("error", out var error))
-                {
-                    throw new InvalidOperationException(
-                        $"The document server rejected the conversion (error {error}). Common " +
-                        "causes: the staging URL isn't reachable from the document server " +
-                        "(check DocumentServer:CallbackBaseUrl), or JWT is enabled on the " +
-                        "document server and the request isn't signed.");
-                }
-
-                if (payload.TryGetProperty("endConvert", out var done)
-                    && done.ValueKind == JsonValueKind.True
-                    && payload.TryGetProperty("fileUrl", out var fileUrl)
-                    && fileUrl.GetString() is { Length: > 0 } address)
-                {
-                    return await client.GetByteArrayAsync(address, cancellationToken);
-                }
-
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
-            }
-
-            throw new TimeoutException(
-                "The document server did not finish converting the copy to PDF within 30 seconds.");
-        }
-        finally
-        {
-            try
-            {
-                await files.DeleteAsync(stagingKey, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                // Never masks the real failure — a cleanup problem is worth knowing about but
-                // is not what the caller was asking about.
-                logger.LogWarning(ex, "Could not remove print staging file {Key}.", stagingKey);
-            }
-        }
-    }
-
     /// <summary>
-    /// Reads back a staging copy for the document server. Keyed by the conversion id the token
-    /// carries, so a valid signed token is the only way to reach it.
+    /// Delegates to <see cref="IDocumentConverter"/> rather than owning the staging and
+    /// polling protocol, which it previously duplicated. Two copies of that protocol would
+    /// have drifted, with the less-exercised copy's bugs surfacing later and stranger.
     /// </summary>
-    public Task<byte[]?> ReadStagedAsync(Guid conversionId, CancellationToken cancellationToken) =>
-        files.ReadAsync($"{StagingPrefix}{conversionId:N}.docx", cancellationToken);
+    private Task<byte[]> ConvertToPdfAsync(byte[] stampedDocx, CancellationToken cancellationToken) =>
+        converter.ToPdfAsync(stampedDocx, cancellationToken);
 }
