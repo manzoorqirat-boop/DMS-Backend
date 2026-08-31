@@ -79,3 +79,22 @@ public sealed record ViewerLaunchView(
     string DocumentServerUrl,
     string FileUrl,
     string ViewerUserName);
+
+/// <summary>
+/// Everything needed to launch desktop Word against a checked-out document.
+/// <para>
+/// <see cref="ProtocolUrl"/> is the <c>ms-word:ofe|u|...</c> handler URL the browser
+/// navigates to; <see cref="WebDavUrl"/> is the plain URL behind it, returned separately so
+/// the UI can offer it as a fallback when the protocol handler is absent — on a machine
+/// without desktop Word, navigating to ms-word: silently does nothing, and a user staring at
+/// an unresponsive button deserves a copyable URL instead.
+/// </para>
+/// </summary>
+public sealed record DesktopEditLaunchView(
+    Guid SessionId,
+    Guid DocumentId,
+    string DocumentNumber,
+    string Title,
+    string ProtocolUrl,
+    string WebDavUrl,
+    DateTimeOffset ExpiresAt);
