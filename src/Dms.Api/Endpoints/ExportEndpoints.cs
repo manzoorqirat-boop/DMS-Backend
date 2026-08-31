@@ -43,7 +43,8 @@ public static class ExportEndpoints
             while (rows.Count < MaxExportRows)
             {
                 var batch = await service.ListAsync(
-                    siteId, departmentId, documentTypeId, currentRevisionsOnly ?? true, null, request, ct);
+                    siteId, departmentId, documentTypeId, currentRevisionsOnly ?? true, null,
+                    status: null, request, ct);
 
                 foreach (var d in batch.Items)
                 {
