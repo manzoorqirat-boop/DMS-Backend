@@ -331,3 +331,39 @@ public sealed class RetentionPolicyRepository(DmsDbContext db) : IRetentionPolic
     public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
         SaveChangesTranslator.SaveAsync(db, cancellationToken);
 }
+
+/// <summary>
+/// The single password policy row, seeded with the defaults on first read.
+/// <para>
+/// Seeding here rather than in BootstrapSeeder is deliberate: an installation that predates
+/// this feature has users but no policy row, and those installations must start enforcing a
+/// policy at the next request rather than only after a redeploy that happens to re-run
+/// bootstrap.
+/// </para>
+/// </summary>
+public sealed class PasswordPolicyRepository(DmsDbContext db) : IPasswordPolicyRepository
+{
+    public async Task<PasswordPolicy> GetAsync(CancellationToken cancellationToken)
+    {
+        // Ordered by Id, which is UUIDv7 and therefore sorts in creation order — so this is
+        // "the oldest row" without PasswordPolicy needing to implement ITimestamped purely to
+        // be sorted by.
+        var existing = await db.PasswordPolicies
+            .OrderBy(x => x.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var seeded = PasswordPolicy.CreateDefault("system");
+        db.PasswordPolicies.Add(seeded);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return seeded;
+    }
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
