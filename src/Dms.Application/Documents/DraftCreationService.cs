@@ -189,11 +189,13 @@ public sealed class DraftCreationService(
         Guid? documentTypeId,
         bool currentRevisionsOnly,
         string? search,
+        DocumentStatus? status,
         PagedRequest paging,
         CancellationToken cancellationToken)
     {
         var found = await documents.ListAsync(
-            siteId, departmentId, documentTypeId, currentRevisionsOnly, search, paging, cancellationToken);
+            siteId, departmentId, documentTypeId, currentRevisionsOnly, search, status, paging,
+            cancellationToken);
 
         return found.Map(DocumentSummary.From);
     }
