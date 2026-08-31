@@ -74,10 +74,19 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
         Guid? documentTypeId,
         bool currentRevisionsOnly,
         string? search,
+        DocumentStatus? status,
         PagedRequest paging,
         CancellationToken cancellationToken)
     {
         var query = db.ControlledDocuments.AsQueryable();
+
+        // Filtered server-side rather than in the caller, which is the whole point: counting
+        // statuses in a fetched page would be wrong the moment the register outgrows one page,
+        // reporting whatever happened to land on it rather than the real total.
+        if (status is { } documentStatus)
+        {
+            query = query.Where(x => x.Status == documentStatus);
+        }
 
         if (currentRevisionsOnly)
         {
