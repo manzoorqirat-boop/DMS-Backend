@@ -1,5 +1,6 @@
 using Dms.Application.Common;
 using Dms.Application.Documents;
+using Dms.Domain.Enums;
 
 namespace Dms.Api.Endpoints;
 
@@ -61,11 +62,12 @@ public static class DocumentEndpoints
             Guid? documentTypeId,
             bool? currentRevisionsOnly,
             string? search,
+            DocumentStatus? status,
             int? page,
             int? pageSize,
             CancellationToken ct) =>
             Results.Ok(await service.ListAsync(
-                siteId, departmentId, documentTypeId, currentRevisionsOnly ?? true, search,
+                siteId, departmentId, documentTypeId, currentRevisionsOnly ?? true, search, status,
                 new PagedRequest(page, pageSize), ct)));
 
         group.MapGet("/{id:guid}/revisions", async (
