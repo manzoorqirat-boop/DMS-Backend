@@ -19,6 +19,8 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     public DbSet<DocumentNumberSequence> DocumentNumberSequences => Set<DocumentNumberSequence>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<DmsUser> Users => Set<DmsUser>();
+
+    public DbSet<PasswordPolicy> PasswordPolicies => Set<PasswordPolicy>();
     public DbSet<SignatureRequest> SignatureRequests => Set<SignatureRequest>();
     public DbSet<ElectronicSignature> ElectronicSignatures => Set<ElectronicSignature>();
     public DbSet<Role> Roles => Set<Role>();
