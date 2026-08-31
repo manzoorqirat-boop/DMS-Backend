@@ -28,8 +28,10 @@ public class DmsUser : Entity, ITimestamped
         string fullName,
         string department,
         string designation,
-        string password)
+        string password,
+        string? employeeId = null)
     {
+        EmployeeId = string.IsNullOrWhiteSpace(employeeId) ? null : employeeId.Trim();
         UserName = string.IsNullOrWhiteSpace(userName)
             ? throw new ArgumentException("Username is required.", nameof(userName))
             : userName.Trim().ToLowerInvariant();
@@ -37,6 +39,15 @@ public class DmsUser : Entity, ITimestamped
         Department = Require(department, nameof(department));
         Designation = Require(designation, nameof(designation));
         PasswordHash = PasswordHasher.Hash(password);
+        PasswordLastChanged = DateTimeOffset.UtcNow;
+
+        // An account is created with a password its administrator necessarily knows, which
+        // makes that password a shared secret — and here the password is also the signing
+        // credential. Forcing a change at first login is what makes it the holder's alone
+        // before it can sign anything. Ported from the ERES build, which sets the same flag
+        // on every created account for the same reason.
+        MustChangePassword = true;
+
         CreatedAt = DateTimeOffset.UtcNow;
     }
 
@@ -55,7 +66,42 @@ public class DmsUser : Entity, ITimestamped
     /// </summary>
     public string? Email { get; private set; }
 
+    /// <summary>
+    /// The organisation's own staff/employee number. Optional, and deliberately distinct from
+    /// <see cref="UserName"/>: §11.100(b) asks that the identity of an individual be verified
+    /// before their electronic signature is issued, and a payroll-backed identifier is what
+    /// makes that verification traceable to a real person rather than to a login someone
+    /// created.
+    /// </summary>
+    public string? EmployeeId { get; private set; }
+
     public string PasswordHash { get; private set; } = "";
+
+    /// <summary>
+    /// Forces a password change before the account can be used. Set at creation, and on any
+    /// administrative intervention that leaves the password known to someone other than its
+    /// holder.
+    /// </summary>
+    public bool MustChangePassword { get; private set; }
+
+    /// <summary>Drives expiry under <c>PasswordPolicy.ExpiryDays</c>.</summary>
+    public DateTimeOffset PasswordLastChanged { get; private set; }
+
+    /// <summary>
+    /// Hashes of previous passwords, oldest first, so the policy can refuse reuse.
+    /// <para>
+    /// Hashes only — never anything reversible. The list is trimmed to the configured history
+    /// depth on every change, because keeping more old hashes than the policy will ever
+    /// consult is retaining credential material for no purpose.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<string> PasswordHistory
+    {
+        get => _passwordHistory;
+        private set => _passwordHistory = value.ToList();
+    }
+
+    private List<string> _passwordHistory = [];
 
     public bool IsActive { get; private set; } = true;
 
@@ -126,11 +172,68 @@ public class DmsUser : Entity, ITimestamped
     public void SetEmail(string? email) =>
         Email = string.IsNullOrWhiteSpace(email) ? null : email.Trim();
 
-    public void ChangePassword(string newPassword)
+    /// <summary>
+    /// Sets a new password, retiring the current one into history.
+    /// <para>
+    /// Also clears both lockout counters and the forced-change flag: someone who has just
+    /// proved they know the current password and chosen a new one has demonstrated exactly
+    /// what those states existed to establish.
+    /// </para>
+    /// </summary>
+    /// <param name="historyDepth">
+    /// How many old hashes to retain, from <c>PasswordPolicy.HistoryCount</c>. Older entries
+    /// beyond this are discarded rather than kept indefinitely.
+    /// </param>
+    public void ChangePassword(string newPassword, int historyDepth = 3)
     {
+        // The outgoing hash joins the history before being replaced — otherwise the password
+        // just set could immediately be set again.
+        if (!string.IsNullOrEmpty(PasswordHash))
+        {
+            _passwordHistory.Add(PasswordHash);
+        }
+
+        var keep = Math.Clamp(historyDepth, 1, 24);
+        if (_passwordHistory.Count > keep)
+        {
+            _passwordHistory.RemoveRange(0, _passwordHistory.Count - keep);
+        }
+
         PasswordHash = PasswordHasher.Hash(newPassword);
+        PasswordLastChanged = DateTimeOffset.UtcNow;
+        MustChangePassword = false;
+
         FailedSigningAttempts = 0;
         LockedOutUntil = null;
+        FailedLoginAttempts = 0;
+        LoginLockedUntil = null;
+
+        Touch();
+    }
+
+    /// <summary>
+    /// Whether a candidate password matches one this user has recently used.
+    /// <para>
+    /// Compared against the retained hashes rather than stored passwords — the history holds
+    /// hashes precisely so this check never requires anything reversible.
+    /// </para>
+    /// </summary>
+    public bool MatchesRecentPassword(string candidate, int historyDepth)
+    {
+        var keep = Math.Clamp(historyDepth, 1, 24);
+
+        return _passwordHistory
+            .TakeLast(keep)
+            .Any(hash => PasswordHasher.Verify(candidate, hash));
+    }
+
+    /// <summary>
+    /// Requires a password change at next login without setting one — used when an
+    /// administrator needs to force re-credentialing without ever knowing the new password.
+    /// </summary>
+    public void RequirePasswordChange()
+    {
+        MustChangePassword = true;
         Touch();
     }
 
