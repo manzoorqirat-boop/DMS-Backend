@@ -75,7 +75,13 @@ public sealed record CreateUserRequest(
     string FullName,
     string Department,
     string Designation,
-    string Password);
+    string Password,
+    /// <summary>
+    /// Optional staff/employee number. §11.100(b) asks that an individual's identity be
+    /// verified before their electronic signature is issued; a payroll-backed identifier is
+    /// what ties the account to a verified person rather than to a login someone created.
+    /// </summary>
+    string? EmployeeId = null);
 
 public sealed record UserSummary(
     Guid Id,
@@ -84,8 +90,14 @@ public sealed record UserSummary(
     string Department,
     string Designation,
     bool IsActive,
-    bool IsLockedOut)
+    bool IsLockedOut,
+    string? EmployeeId,
+    bool MustChangePassword,
+    DateTimeOffset PasswordLastChanged)
 {
+    // PasswordHash and PasswordHistory are deliberately absent, and must stay absent: this
+    // record is what /api/users returns, and credential material has no business crossing
+    // that boundary even in hashed form.
     public static UserSummary From(DmsUser user, DateTimeOffset now) => new(
         user.Id,
         user.UserName,
@@ -93,5 +105,8 @@ public sealed record UserSummary(
         user.Department,
         user.Designation,
         user.IsActive,
-        user.IsLockedOut(now));
+        user.IsLockedOut(now),
+        user.EmployeeId,
+        user.MustChangePassword,
+        user.PasswordLastChanged);
 }
