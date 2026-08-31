@@ -1,5 +1,6 @@
 using Dms.Application.Common;
 using Dms.Domain.Entities;
+using Dms.Domain.Enums;
 
 namespace Dms.Application.Abstractions;
 
@@ -56,6 +57,7 @@ public interface IControlledDocumentRepository
         Guid? documentTypeId,
         bool currentRevisionsOnly,
         string? search,
+        DocumentStatus? status,
         PagedRequest paging,
         CancellationToken cancellationToken);
 
