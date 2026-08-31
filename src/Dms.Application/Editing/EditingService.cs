@@ -420,6 +420,170 @@ public sealed class EditingService(
     /// their own; breaking someone else's needs <see cref="Permission.DocumentEdit"/> and is
     /// recorded as a force-close rather than a normal check-in.
     /// </summary>
+    /// <summary>
+    /// Serves the working copy to desktop Word over WebDAV, and confirms the caller still
+    /// holds the check-out.
+    /// <para>
+    /// <b>This path deliberately puts a controlled file on a workstation</b>, which URS #13
+    /// otherwise forbids — it exists because desktop-Word editing was subsequently agreed as a
+    /// requirement, and desktop Word cannot work any other way. The consequences are real and
+    /// worth stating where the code lives: once Word has the file it is in the user's temp and
+    /// cache directories, it stays there after they finish, and DMS has no means to remove it.
+    /// Integrity is therefore enforced on the way back in (see <see cref="SaveFromWebDavAsync"/>)
+    /// rather than by preventing the copy in the first place — detection, not prevention.
+    /// </para>
+    /// <para>
+    /// The in-browser path remains available and remains the one that satisfies URS #13. This
+    /// is an addition, not a replacement, and it should be offered only where desktop Word is
+    /// genuinely available.
+    /// </para>
+    /// </summary>
+    /// <summary>
+    /// Checks the document out and returns the URLs for opening it in desktop Word.
+    /// <para>
+    /// Reuses <see cref="StartSessionAsync"/> wholesale rather than duplicating its guards, so
+    /// the desktop path cannot drift into permitting something the browser path forbids — same
+    /// Draft-only rule, same permission check, same check-out semantics, same re-entrancy for
+    /// whoever already holds the lock.
+    /// </para>
+    /// </summary>
+    public async Task<Result<DesktopEditLaunchView>> StartDesktopSessionAsync(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var started = await StartSessionAsync(documentId, cancellationToken);
+        if (!started.IsSuccess)
+        {
+            return started.Error!;
+        }
+
+        var launch = started.Value;
+
+        // The same signed session token the browser editor uses, embedded in the path because
+        // Word's WebClient service does not reliably forward Authorization headers.
+        var token = tokens.Issue(launch.SessionId, launch.ExpiresAt);
+        var root = settings.CallbackBaseUrl.TrimEnd('/');
+
+        // The trailing filename matters: Word derives the title bar text and its own lock-file
+        // names from the last path segment, and a URL ending in the token would show the user
+        // a document apparently called "eyJhbGciOi...".
+        var fileName = $"{launch.DocumentNumber}.docx";
+        var webDavUrl = $"{root}/api/public/webdav/{token}/{Uri.EscapeDataString(fileName)}";
+
+        // ofe = open for editing, u = the URL follows. Word registers this handler on install.
+        return new DesktopEditLaunchView(
+            launch.SessionId,
+            launch.DocumentId,
+            launch.DocumentNumber,
+            launch.Title,
+            $"ms-word:ofe|u|{webDavUrl}",
+            webDavUrl,
+            launch.ExpiresAt);
+    }
+
+    public async Task<Result<(byte[] Content, string FileName, EditingSession Session)>> GetFileForWebDavAsync(
+        string token,
+        CancellationToken cancellationToken)
+    {
+        var resolved = await ResolveTokenAsync(token, cancellationToken);
+        if (!resolved.IsSuccess)
+        {
+            return resolved.Error!;
+        }
+
+        var (session, document) = resolved.Value;
+
+        var content = await documentFiles.ReadAsync(document.WorkingCopyKey, cancellationToken);
+        if (content is null)
+        {
+            return Error.NotFound("document_file_missing", "The stored file is missing.");
+        }
+
+        // Every fetch is a heartbeat: Word re-reads the file on open and periodically while it
+        // holds the lock, so this keeps a legitimately-open desktop session from lapsing
+        // mid-edit the way a silent lock timeout would.
+        session.Touch(clock.UtcNow, settings.SessionLifetime);
+        await sessions.SaveChangesAsync(cancellationToken);
+
+        // The filename Word shows in its title bar and uses for its own lock files.
+        return Result<(byte[], string, EditingSession)>.Success(
+            (content, $"{document.DocumentNumber}.docx", session));
+    }
+
+    /// <summary>
+    /// Applies a save arriving from desktop Word via WebDAV PUT.
+    /// <para>
+    /// Runs <b>exactly</b> the verification the in-browser callback runs — protected-content
+    /// check, quarantine on failure, audit either way. That equivalence is the point: a
+    /// document edited in Word must not be able to enter the system under weaker scrutiny than
+    /// one edited in the browser, or the desktop path becomes the way to bypass the controls.
+    /// </para>
+    /// <para>
+    /// Word PUTs repeatedly during an editing session (on save, and on autosave), so this does
+    /// not close the check-out. The session ends when the user releases it or it expires,
+    /// mirroring force-save rather than editor-closed.
+    /// </para>
+    /// </summary>
+    public async Task<Result<bool>> SaveFromWebDavAsync(
+        string token,
+        byte[] content,
+        CancellationToken cancellationToken)
+    {
+        var resolved = await ResolveTokenAsync(token, cancellationToken);
+        if (!resolved.IsSuccess)
+        {
+            return resolved.Error!;
+        }
+
+        var (session, document) = resolved.Value;
+
+        if (content.Length == 0)
+        {
+            return Error.Validation("empty_upload", "The uploaded file was empty.");
+        }
+
+        var expected = await BuildExpectedMetadataAsync(document, cancellationToken);
+        if (expected is null)
+        {
+            return Error.Conflict("metadata_unresolved", "The document's master data could not be resolved.");
+        }
+
+        var verification = DocxProtectionVerifier.Verify(content, expected);
+
+        if (!verification.IsValid)
+        {
+            var quarantineKey = $"quarantine/{document.Id:N}/{Uuid7.NewGuid():N}.docx";
+            await documentFiles.SaveAsync(quarantineKey, content, cancellationToken);
+
+            audit.Record(
+                AuditAction.EditingSaveRejected, EntityType, document.Id, document.DocumentNumber,
+                $"Save from desktop Word rejected — protected content was altered. "
+                + $"{string.Join(" | ", verification.Findings)} "
+                + $"Rejected file retained for inspection at {quarantineKey}.");
+
+            audit.Record(
+                AuditAction.DocumentIntegrityCheckFailed, EntityType, document.Id, document.DocumentNumber,
+                string.Join(" | ", verification.Findings));
+
+            await sessions.SaveChangesAsync(cancellationToken);
+
+            return Error.Validation(
+                "integrity_check_failed",
+                "The saved document failed integrity checks: system-populated fields or document "
+                + "protection were altered. The file was retained for review and not applied.");
+        }
+
+        await documentFiles.SaveAsync(document.WorkingCopyKey, content, cancellationToken);
+        session.RecordSave(clock.UtcNow);
+
+        audit.Record(
+            AuditAction.EditingSaveAccepted, EntityType, document.Id, document.DocumentNumber,
+            $"Save {session.SaveCount} accepted from {session.UserName} via desktop Word (WebDAV).");
+
+        await sessions.SaveChangesAsync(cancellationToken);
+        return Result<bool>.Success(true);
+    }
+
     public async Task<Result<EditingSessionView>> ReleaseAsync(
         Guid documentId,
         string? note,
