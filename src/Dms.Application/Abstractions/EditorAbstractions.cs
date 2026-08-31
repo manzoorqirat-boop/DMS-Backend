@@ -64,6 +64,18 @@ public interface IEditorSettings
     /// <summary>How long a check-out lasts before it can be taken over.</summary>
     TimeSpan SessionLifetime { get; }
 
+    /// <summary>
+    /// The shared secret the document server validates requests against — its own JWT_SECRET.
+    /// <para>
+    /// Exposed because signing a conversion request is a real requirement, not a convenience:
+    /// with JWT enabled on the document server (as it should be), an unsigned request is
+    /// rejected with an HTML error page rather than a useful message. Note this is used to mint
+    /// a genuine JWT, which is a different format from <see cref="IEditorTokenService"/>'s
+    /// tokens — same secret, different scheme, and the document server accepts only the former.
+    /// </para>
+    /// </summary>
+    string TokenSecret { get; }
+
     /// <summary>True when a document server is actually configured.</summary>
     bool IsConfigured { get; }
 }
