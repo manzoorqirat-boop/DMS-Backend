@@ -38,6 +38,16 @@ public static class EditingEndpoints
         // AllowAnonymous is load-bearing here: the fallback authorization policy denies
         // everything by default, and the document server is a separate process with no user
         // session. The signed, expiring token in the path is its only credential.
+        // Desktop Word. Deliberately a separate route from /edit rather than a flag on it:
+        // this path puts the file on a workstation, which the in-browser path exists to avoid,
+        // and that difference should be visible in the API surface rather than hidden behind
+        // a parameter.
+        documents.MapPost("/{id:guid}/edit/desktop", async (
+            EditingService service,
+            Guid id,
+            CancellationToken ct) =>
+            (await service.StartDesktopSessionAsync(id, ct)).ToHttpResult());
+
         // Read-only view. Separate from /edit because it takes no check-out and works at any
         // status — a reviewer reads documents that are deliberately not editable.
         documents.MapPost("/{id:guid}/view", async (
