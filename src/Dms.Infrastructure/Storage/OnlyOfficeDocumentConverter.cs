@@ -63,14 +63,30 @@ public sealed class OnlyOfficeDocumentConverter(
             var sourceUrl =
                 $"{settings.CallbackBaseUrl.TrimEnd('/')}/api/public/editor/{token}/print-source";
 
-            var request = new
+            // A dictionary rather than an anonymous type because the same payload must be both
+            // signed and sent, and the signature has to cover exactly what is transmitted.
+            var request = new Dictionary<string, object?>
             {
-                async = false,
-                filetype = "docx",
-                outputtype = "pdf",
-                key = conversionId.ToString("N"),
-                title = $"{conversionId:N}.docx",
-                url = sourceUrl,
+                ["async"] = false,
+                ["filetype"] = "docx",
+                ["outputtype"] = "pdf",
+                ["key"] = conversionId.ToString("N"),
+                ["title"] = $"{conversionId:N}.docx",
+                ["url"] = sourceUrl,
+            };
+
+            // OnlyOffice rejects unsigned requests whenever JWT_ENABLED is true on the document
+            // server — which it should be, or anyone who can reach it can convert anything. The
+            // rejection arrives as an HTML error page, which is why the original symptom was an
+            // opaque "'<' is an invalid start of a value" JSON parse failure rather than
+            // anything mentioning authentication.
+            //
+            // Note this is a real JWT, distinct from IEditorTokenService's tokens: those are a
+            // custom payload.signature format for DMS's own file URLs, and OnlyOffice would not
+            // accept one. Same secret, different format.
+            var signed = new Dictionary<string, object?>(request)
+            {
+                ["token"] = OnlyOfficeJwt.Sign(request, settings.TokenSecret),
             };
 
             // async:false asks the service to block until finished, but it may still answer
@@ -78,10 +94,52 @@ public sealed class OnlyOfficeDocumentConverter(
             // suffices.
             for (var attempt = 0; attempt < 30; attempt++)
             {
-                var response = await client.PostAsJsonAsync(conversionUrl, request, cancellationToken);
-                response.EnsureSuccessStatusCode();
+                using var message = new HttpRequestMessage(HttpMethod.Post, conversionUrl)
+                {
+                    Content = JsonContent.Create(signed),
+                };
 
-                var payload = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+                // Some document-server builds check the Authorization header rather than the
+                // body token, and accept either. Sending both costs nothing and avoids a
+                // version-dependent failure that would look identical to a misconfiguration.
+                //
+                // Built as a local rather than inline in the interpolation: a collection
+                // initializer's braces inside an interpolated string is at best hard to read
+                // and at worst ambiguous to the parser.
+                var headerPayload = new Dictionary<string, object?> { ["payload"] = request };
+                var headerToken = OnlyOfficeJwt.Sign(headerPayload, settings.TokenSecret);
+
+                message.Headers.TryAddWithoutValidation("Authorization", $"Bearer {headerToken}");
+
+                var response = await client.SendAsync(message, cancellationToken);
+
+                // Read as text first, deliberately. The conversion service answers with JSON
+                // when it is reached correctly — but a proxy error page, an OnlyOffice error
+                // page, or a redirect to a login all arrive as HTML, and parsing those as JSON
+                // produced only "'<' is an invalid start of a value", which says nothing about
+                // what actually went wrong. Keeping the raw body means the message can carry it.
+                var raw = await response.Content.ReadAsStringAsync(cancellationToken);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException(
+                        $"The document server returned {(int)response.StatusCode} "
+                        + $"{response.ReasonPhrase} from {conversionUrl}. Body: {Excerpt(raw)}");
+                }
+
+                JsonElement payload;
+                try
+                {
+                    payload = JsonSerializer.Deserialize<JsonElement>(raw);
+                }
+                catch (JsonException)
+                {
+                    throw new InvalidOperationException(
+                        $"The document server replied to {conversionUrl} with something that "
+                        + $"isn't JSON, which usually means the request never reached the "
+                        + $"conversion service — a proxy error page, a redirect, or the wrong "
+                        + $"URL. Body: {Excerpt(raw)}");
+                }
 
                 if (payload.TryGetProperty("error", out var error))
                 {
@@ -120,6 +178,22 @@ public sealed class OnlyOfficeDocumentConverter(
                 logger.LogWarning(ex, "Could not remove conversion staging file {Key}.", stagingKey);
             }
         }
+    }
+
+    /// <summary>
+    /// Trims a response body to something readable in an error message and a log line. An
+    /// HTML error page can be tens of kilobytes; the first couple of hundred characters
+    /// always contain the part that identifies it.
+    /// </summary>
+    private static string Excerpt(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return "(empty)";
+        }
+
+        var collapsed = body.Replace("\r", " ").Replace("\n", " ").Trim();
+        return collapsed.Length <= 300 ? collapsed : collapsed[..300] + "…";
     }
 
     /// <summary>
