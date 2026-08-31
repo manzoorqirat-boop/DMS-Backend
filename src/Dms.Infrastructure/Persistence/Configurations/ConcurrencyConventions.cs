@@ -46,6 +46,7 @@ public static class ConcurrencyConventions
             typeof(RetentionPolicy),
             typeof(MetadataFieldDefinition),
             typeof(NotificationRule),
+            typeof(PasswordPolicy),
 
             // Master data.
             typeof(DocumentType),
