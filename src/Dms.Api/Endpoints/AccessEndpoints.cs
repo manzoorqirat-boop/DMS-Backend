@@ -8,6 +8,21 @@ public static class AccessEndpoints
 {
     public static void MapRoleEndpoints(this IEndpointRouteBuilder app)
     {
+        // Password policy. Read is open to any authenticated caller so the change-password
+        // screen can state the rules up front; writing requires UserManage.
+        var passwordPolicy = app.MapGroup("/api/password-policy").WithTags("Password Policy");
+
+        passwordPolicy.MapGet("/", async (
+            PasswordPolicyService service,
+            CancellationToken ct) =>
+            (await service.GetAsync(ct)).ToHttpResult());
+
+        passwordPolicy.MapPut("/", async (
+            PasswordPolicyService service,
+            UpdatePasswordPolicyRequest request,
+            CancellationToken ct) =>
+            (await service.UpdateAsync(request, ct)).ToHttpResult());
+
         var group = app.MapGroup("/api/roles").WithTags("Roles");
 
         // The full list of grantable privileges, for rendering the matrix in an admin UI. Read
