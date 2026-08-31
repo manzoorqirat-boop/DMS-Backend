@@ -2,6 +2,7 @@ using Dms.Application.Abstractions;
 using Dms.Application.Common;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
+using Dms.Domain.Services;
 
 namespace Dms.Application.Signing;
 
@@ -26,6 +27,7 @@ namespace Dms.Application.Signing;
 /// </summary>
 public sealed class UserService(
     IUserRepository users,
+    IPasswordPolicyRepository policies,
     IAccessControl access,
     IAuditTrail audit,
     ICurrentUser currentUser,
@@ -43,11 +45,21 @@ public sealed class UserService(
             return gate;
         }
 
+        // Checked against the configured policy before the entity is built, so a rejected
+        // password never reaches the hasher and the caller gets the specific rule it broke
+        // rather than a generic failure.
+        var policy = await policies.GetAsync(cancellationToken);
+        if (PasswordPolicyValidator.Validate(request.Password, policy) is { } policyError)
+        {
+            return Error.Validation("password_policy", policyError);
+        }
+
         DmsUser user;
         try
         {
             user = new DmsUser(
-                request.UserName, request.FullName, request.Department, request.Designation, request.Password);
+                request.UserName, request.FullName, request.Department, request.Designation,
+                request.Password, request.EmployeeId);
         }
         catch (ArgumentException ex)
         {
@@ -166,9 +178,32 @@ public sealed class UserService(
             return Error.Validation("current_password_incorrect", "The current password is incorrect.");
         }
 
+        var policy = await policies.GetAsync(cancellationToken);
+
+        if (PasswordPolicyValidator.Validate(newPassword, policy) is { } policyError)
+        {
+            return Error.Validation("password_policy", policyError);
+        }
+
+        // Reusing the current password would satisfy the history check below only by accident
+        // — the outgoing hash isn't in history until ChangePassword moves it there — so it is
+        // rejected explicitly.
+        if (user.VerifyPassword(newPassword))
+        {
+            return Error.Validation(
+                "password_unchanged", "The new password must be different from your current one.");
+        }
+
+        if (user.MatchesRecentPassword(newPassword, policy.HistoryCount))
+        {
+            return Error.Validation(
+                "password_reused",
+                $"That password was used recently. Your last {policy.HistoryCount} password(s) cannot be reused.");
+        }
+
         try
         {
-            user.ChangePassword(newPassword);
+            user.ChangePassword(newPassword, policy.HistoryCount);
         }
         catch (ArgumentException ex)
         {
