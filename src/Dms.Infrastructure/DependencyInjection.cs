@@ -88,13 +88,20 @@ public static class DependencyInjection
         // being mistaken for a real controlled copy.
         if (!string.IsNullOrWhiteSpace(configuration[EditorConfig.UrlKey]))
         {
-            services.AddHttpClient(OnlyOfficePrintRenderer.ClientName,
+            services.AddHttpClient(OnlyOfficeDocumentConverter.ClientName,
                 client => client.Timeout = TimeSpan.FromMinutes(2));
+            services.AddScoped<IDocumentConverter, OnlyOfficeDocumentConverter>();
             services.AddScoped<IControlledPrintRenderer, OnlyOfficePrintRenderer>();
         }
         else
         {
             services.AddSingleton<IControlledPrintRenderer, PassThroughPrintRenderer>();
+
+            // Registered unconditionally so consumers can depend on IDocumentConverter without
+            // knowing whether a document server exists — it reports IsAvailable=false and they
+            // degrade honestly. The alternative, registering only in the configured branch,
+            // leaves the container unresolvable for anything that injects it.
+            services.AddSingleton<IDocumentConverter, UnavailableDocumentConverter>();
         }
 
         var maxAttempts = int.TryParse(configuration[$"{SigningPolicy.SectionName}:MaxFailedAttempts"], out var parsed)
@@ -139,6 +146,7 @@ public static class DependencyInjection
         services.AddScoped<DocumentRevisionService>();
         services.AddScoped<DocumentLifecycleService>();
         services.AddScoped<RetentionService>();
+        services.AddScoped<ApprovedPdfService>();
 
         // The whole in-browser editing stack registers together or not at all. EditingService
         // depends on IEditorTokenService and IEditorContentFetcher, so registering it outside
