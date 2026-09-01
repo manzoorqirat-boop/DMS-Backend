@@ -49,6 +49,33 @@ public class DocxTemplateValidatorTests
     }
 
     [Fact]
+    public void Controls_in_a_page_header_satisfy_the_requirement()
+    {
+        // The arrangement a real controlled document uses: metadata in the header so it repeats
+        // on every printed page. This previously failed validation for "missing" controls that
+        // were present, because only word/document.xml was inspected.
+        var result = DocxTemplateValidator.Validate(
+            TestDocx.Build(
+                tags: [],
+                lockControls: true,
+                headerTags: TemplateFieldTags.Required));
+
+        Assert.True(result.IsValid, string.Join(" | ", result.Issues));
+    }
+
+    [Fact]
+    public void Controls_split_between_header_and_body_are_both_found()
+    {
+        var half = TemplateFieldTags.Required.Take(3).ToList();
+        var rest = TemplateFieldTags.Required.Skip(3).ToList();
+
+        var result = DocxTemplateValidator.Validate(
+            TestDocx.Build(tags: rest, lockControls: true, headerTags: half));
+
+        Assert.True(result.IsValid, string.Join(" | ", result.Issues));
+    }
+
+    [Fact]
     public void Locked_content_controls_pass_without_document_protection()
     {
         // The OnlyOffice-authored case. Every metadata control is individually locked, so the
