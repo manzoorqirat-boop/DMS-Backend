@@ -29,11 +29,12 @@ public static class DocxProtectionVerifier
     public static DocxVerificationResult Verify(byte[] docxBytes, IReadOnlyDictionary<string, string> expected)
     {
         XDocument documentXml;
+        IReadOnlyList<XDocument> headerXml;
         XDocument? settingsXml;
 
         try
         {
-            (documentXml, settingsXml) = LoadParts(docxBytes);
+            (documentXml, headerXml, settingsXml) = LoadParts(docxBytes);
         }
         catch (FileNotFoundException)
         {
@@ -53,7 +54,12 @@ public static class DocxProtectionVerifier
                 + "and metadata regions were unlocked at some point during editing.");
         }
 
-        var actual = ReadContentControlValues(documentXml);
+        // Headers are inspected as well as the body. Metadata in a page header is exactly what
+        // this check exists to protect — it repeats on every printed page, so altering it is
+        // the tampering with the widest reach, and reading only the body would have let it
+        // through silently while catching the same edit made in the body.
+        var contentParts = new List<XDocument>(headerXml) { documentXml };
+        var actual = ReadContentControlValues(contentParts);
 
         foreach (var (tag, expectedValue) in expected)
         {
@@ -78,7 +84,8 @@ public static class DocxProtectionVerifier
             : DocxVerificationResult.Failed(findings);
     }
 
-    private static (XDocument document, XDocument? settings) LoadParts(byte[] docxBytes)
+    private static (XDocument document, IReadOnlyList<XDocument> headers, XDocument? settings)
+        LoadParts(byte[] docxBytes)
     {
         using var stream = new MemoryStream(docxBytes);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
@@ -89,6 +96,19 @@ public static class DocxProtectionVerifier
         using var documentStream = documentEntry.Open();
         var document = XDocument.Load(documentStream);
 
+        var headers = new List<XDocument>();
+        foreach (var entry in archive.Entries)
+        {
+            if (!entry.FullName.StartsWith("word/header", StringComparison.Ordinal)
+                || !entry.FullName.EndsWith(".xml", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            using var headerStream = entry.Open();
+            headers.Add(XDocument.Load(headerStream));
+        }
+
         var settingsEntry = archive.GetEntry("word/settings.xml");
         XDocument? settings = null;
         if (settingsEntry is not null)
@@ -97,7 +117,7 @@ public static class DocxProtectionVerifier
             settings = XDocument.Load(settingsStream);
         }
 
-        return (document, settings);
+        return (document, headers, settings);
     }
 
     /// <summary>
@@ -105,7 +125,7 @@ public static class DocxProtectionVerifier
     /// concatenated — Word splits a single logical value across several runs routinely, so
     /// reading only the first would report spurious modifications.
     /// </summary>
-    private static Dictionary<string, string> ReadContentControlValues(XDocument documentXml)
+    private static Dictionary<string, string> ReadContentControlValues(IEnumerable<XDocument> parts)
     {
         XName sdt = XName.Get("sdt", WordNs);
         XName sdtPr = XName.Get("sdtPr", WordNs);
@@ -116,7 +136,7 @@ public static class DocxProtectionVerifier
 
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        foreach (var element in documentXml.Descendants(sdt))
+        foreach (var element in parts.SelectMany(part => part.Descendants(sdt)))
         {
             var tagName = element.Element(sdtPr)?.Element(tag)?.Attribute(val)?.Value;
             if (string.IsNullOrWhiteSpace(tagName))
