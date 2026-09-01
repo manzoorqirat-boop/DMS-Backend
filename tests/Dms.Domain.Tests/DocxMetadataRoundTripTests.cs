@@ -24,6 +24,29 @@ public class DocxMetadataRoundTripTests
     };
 
     [Fact]
+    public void Values_are_written_into_page_header_controls()
+    {
+        // Header controls were previously left permanently blank: the writer only rewrote
+        // word/document.xml, so a document number placed in the header — where it belongs, so
+        // it repeats per page — never got filled in.
+        var docx = TestDocx.Build(tags: [], headerTags: [TemplateFieldTags.DocumentNumber]);
+
+        var result = DocxMetadataWriter.Write(
+            docx,
+            new Dictionary<string, string> { [TemplateFieldTags.DocumentNumber] = "ND-QIC-SOP-0042" });
+
+        Assert.Empty(result.MissingTags);
+
+        var verification = DocxProtectionVerifier.Verify(
+            result.Content,
+            new Dictionary<string, string> { [TemplateFieldTags.DocumentNumber] = "ND-QIC-SOP-0042" });
+
+        // Verified through the verifier rather than by re-reading the zip: that proves both
+        // halves learned about headers, and that they agree.
+        Assert.DoesNotContain(verification.Findings, f => f.Contains("DocNo", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Written_document_passes_verification_with_the_same_values()
     {
         var metadata = SampleMetadata();
