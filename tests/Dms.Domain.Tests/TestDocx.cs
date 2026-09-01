@@ -30,6 +30,10 @@ internal static class TestDocx
     /// </param>
     /// <param name="includeSettings">False omits word/settings.xml entirely.</param>
     /// <param name="includeEditableRange">False omits the permStart/permEnd pair.</param>
+    /// <param name="headerTags">
+    /// Tags to place in word/header1.xml rather than the body. Null omits the header part
+    /// entirely, which is what most fixtures want.
+    /// </param>
     /// <param name="lockControls">
     /// True puts w:lock="sdtContentLocked" on every content control — the editor-agnostic way
     /// of protecting metadata, and the one OnlyOffice honours. A template built this way needs
@@ -45,7 +49,8 @@ internal static class TestDocx
         bool includeSettings = true,
         bool includeEditableRange = true,
         bool splitRuns = false,
-        bool lockControls = false)
+        bool lockControls = false,
+        IEnumerable<string>? headerTags = null)
     {
         var body = new StringBuilder();
 
@@ -71,6 +76,22 @@ internal static class TestDocx
         {
             ["word/document.xml"] = documentXml,
         };
+
+        // Content controls in a page header. Metadata belongs here in a real controlled
+        // document, because a header repeats on every printed page — so the validator, the
+        // metadata writer and the protection verifier all have to look here, not only in the
+        // body. Each of them previously read word/document.xml alone.
+        if (headerTags is not null)
+        {
+            var header = new StringBuilder();
+            foreach (var tag in headerTags)
+            {
+                header.Append(ContentControl(tag, splitRuns, lockControls));
+            }
+
+            entries["word/header1.xml"] =
+                $"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{WordNs}">{header}</w:hdr>""";
+        }
 
         if (includeSettings)
         {
