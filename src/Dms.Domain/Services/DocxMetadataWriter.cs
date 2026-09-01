@@ -40,16 +40,42 @@ public static class DocxMetadataWriter
         var documentEntry = archive.GetEntry(DocumentPart)
             ?? throw new InvalidOperationException($"Archive doesn't contain {DocumentPart}.");
 
-        XDocument documentXml;
+        // Body and every header part. Metadata belongs in a page header — that is what makes
+        // the document number and revision repeat on every printed page instead of appearing
+        // once and being lost when someone photocopies page 7. Writing only to the body left
+        // header controls permanently blank, and DocxTemplateValidator had the same blind spot,
+        // so a template built the correct way failed validation for controls that were there.
+        var parts = new Dictionary<string, XDocument>(StringComparer.Ordinal);
+
         using (var documentStream = documentEntry.Open())
         {
-            documentXml = XDocument.Load(documentStream, LoadOptions.PreserveWhitespace);
+            parts[DocumentPart] = XDocument.Load(documentStream, LoadOptions.PreserveWhitespace);
         }
 
-        var written = ApplyValues(documentXml, values);
+        foreach (var entry in archive.Entries)
+        {
+            if (!entry.FullName.StartsWith("word/header", StringComparison.Ordinal)
+                || !entry.FullName.EndsWith(".xml", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            using var headerStream = entry.Open();
+            parts[entry.FullName] = XDocument.Load(headerStream, LoadOptions.PreserveWhitespace);
+        }
+
+        // Union across parts: a tag is "written" if it was found anywhere, and a tag present in
+        // both body and header is filled in both — a header showing one revision while the body
+        // shows another would be worse than either being blank.
+        var written = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var part in parts.Values)
+        {
+            written.UnionWith(ApplyValues(part, values));
+        }
+
         var missing = values.Keys.Where(tag => !written.Contains(tag)).ToList();
 
-        var output = Repackage(archive, documentXml);
+        var output = Repackage(archive, parts);
 
         return new DocxMetadataWriteResult
         {
@@ -147,7 +173,12 @@ public static class DocxMetadataWriter
     /// and the protection settings all have to survive untouched, and round-tripping them
     /// through an XML parser risks changing them in ways Word notices.
     /// </summary>
-    private static byte[] Repackage(ZipArchive source, XDocument documentXml)
+    /// <param name="rewritten">
+    /// Parts to write from memory, keyed by their entry name. Everything else in the archive is
+    /// copied through byte-for-byte — a .docx carries relationships, styles and content types
+    /// that must survive untouched.
+    /// </param>
+    private static byte[] Repackage(ZipArchive source, IReadOnlyDictionary<string, XDocument> rewritten)
     {
         using var output = new MemoryStream();
 
@@ -158,11 +189,11 @@ public static class DocxMetadataWriter
                 var copy = target.CreateEntry(entry.FullName, CompressionLevel.Optimal);
                 using var writer = copy.Open();
 
-                if (string.Equals(entry.FullName, DocumentPart, StringComparison.Ordinal))
+                if (rewritten.TryGetValue(entry.FullName, out var modified))
                 {
                     // DisableFormatting: pretty-printing would insert whitespace between run
                     // elements, and in WordprocessingML that whitespace can render as spaces.
-                    documentXml.Save(writer, SaveOptions.DisableFormatting);
+                    modified.Save(writer, SaveOptions.DisableFormatting);
                 }
                 else
                 {
