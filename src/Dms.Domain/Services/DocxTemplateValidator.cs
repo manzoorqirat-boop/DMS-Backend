@@ -43,11 +43,12 @@ public static class DocxTemplateValidator
     public static TemplateValidationResult Validate(byte[] docxBytes, IReadOnlyList<string> requiredTags)
     {
         XDocument documentXml;
+        IReadOnlyList<XDocument> headerXml;
         XDocument? settingsXml;
 
         try
         {
-            (documentXml, settingsXml) = LoadParts(docxBytes);
+            (documentXml, headerXml, settingsXml) = LoadParts(docxBytes);
         }
         catch (FileNotFoundException)
         {
@@ -62,7 +63,9 @@ public static class DocxTemplateValidator
 
         var issues = new List<string>();
 
-        var foundTags = FindContentControlTags(documentXml);
+        // Body and headers together: a control satisfies the requirement wherever it sits.
+        var contentParts = new List<XDocument>(headerXml) { documentXml };
+        var foundTags = FindContentControlTags(contentParts);
         var missingTags = requiredTags.Where(tag => !foundTags.Contains(tag)).ToList();
         if (missingTags.Count > 0)
         {
@@ -76,7 +79,7 @@ public static class DocxTemplateValidator
         // system-populated metadata. Two different mechanisms satisfy it, and either is
         // accepted — see the remarks on ProtectsMetadataFields for why requiring one specific
         // mechanism turned out to be the wrong test.
-        if (!ProtectsMetadataFields(documentXml, settingsXml, requiredTags, out var unlockedTags))
+        if (!ProtectsMetadataFields(contentParts, documentXml, settingsXml, requiredTags, out var unlockedTags))
         {
             issues.Add(
                 "Metadata fields aren't protected from editing. Either lock each metadata " +
@@ -93,7 +96,8 @@ public static class DocxTemplateValidator
             : TemplateValidationResult.Failed(issues);
     }
 
-    private static (XDocument document, XDocument? settings) LoadParts(byte[] docxBytes)
+    private static (XDocument document, IReadOnlyList<XDocument> headers, XDocument? settings)
+        LoadParts(byte[] docxBytes)
     {
         using var stream = new MemoryStream(docxBytes);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
@@ -103,6 +107,25 @@ public static class DocxTemplateValidator
 
         using var documentStream = documentEntry.Open();
         var document = XDocument.Load(documentStream);
+
+        // Header parts are read too, because a controlled document's metadata belongs in a
+        // page header: that is what makes the document number and revision repeat on every
+        // printed page rather than appearing once and being lost the moment someone
+        // photocopies page 7. Previously only word/document.xml was inspected, so a template
+        // built the correct way failed validation for "missing" controls that were present —
+        // and DocxMetadataWriter, which had the same blind spot, would never have filled them.
+        var headers = new List<XDocument>();
+        foreach (var entry in archive.Entries)
+        {
+            if (!entry.FullName.StartsWith("word/header", StringComparison.Ordinal)
+                || !entry.FullName.EndsWith(".xml", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            using var headerStream = entry.Open();
+            headers.Add(XDocument.Load(headerStream));
+        }
 
         // documentProtection lives in settings.xml, not document.xml. Its absence is itself a
         // validation finding (unprotected template), not a load error.
@@ -114,18 +137,18 @@ public static class DocxTemplateValidator
             settings = XDocument.Load(settingsStream);
         }
 
-        return (document, settings);
+        return (document, headers, settings);
     }
 
     /// <summary>Every distinct w:tag/@w:val found on a w:sdt anywhere in the document.</summary>
-    private static HashSet<string> FindContentControlTags(XDocument documentXml)
+    private static HashSet<string> FindContentControlTags(IEnumerable<XDocument> parts)
     {
         XName sdt = XName.Get("sdt", WordNs);
         XName sdtPr = XName.Get("sdtPr", WordNs);
         XName tag = XName.Get("tag", WordNs);
         XName val = XName.Get("val", WordNs);
 
-        return documentXml.Descendants(sdt)
+        return parts.SelectMany(part => part.Descendants(sdt))
             .Select(el => el.Element(sdtPr)?.Element(tag)?.Attribute(val)?.Value)
             .Where(v => !string.IsNullOrWhiteSpace(v))
             .Select(v => v!)
@@ -191,12 +214,13 @@ public static class DocxTemplateValidator
     /// </para>
     /// </summary>
     private static bool ProtectsMetadataFields(
+        IReadOnlyList<XDocument> contentParts,
         XDocument documentXml,
         XDocument? settingsXml,
         IReadOnlyList<string> requiredTags,
         out IReadOnlyList<string> unlockedTags)
     {
-        unlockedTags = FindUnlockedRequiredControls(documentXml, requiredTags);
+        unlockedTags = FindUnlockedRequiredControls(contentParts, requiredTags);
 
         // Mechanism 1: every required control individually locked. An empty required-tag list
         // trivially satisfies this, which is correct — there's no metadata to protect.
@@ -215,7 +239,7 @@ public static class DocxTemplateValidator
     /// naming it twice would just make the failure harder to read.
     /// </summary>
     private static IReadOnlyList<string> FindUnlockedRequiredControls(
-        XDocument documentXml,
+        IReadOnlyList<XDocument> contentParts,
         IReadOnlyList<string> requiredTags)
     {
         XName sdt = XName.Get("sdt", WordNs);
@@ -226,7 +250,7 @@ public static class DocxTemplateValidator
 
         var lockedTags = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var element in documentXml.Descendants(sdt))
+        foreach (var element in contentParts.SelectMany(part => part.Descendants(sdt)))
         {
             var properties = element.Element(sdtPr);
             var tagValue = properties?.Element(tag)?.Attribute(val)?.Value;
@@ -247,7 +271,7 @@ public static class DocxTemplateValidator
             }
         }
 
-        var presentTags = FindContentControlTags(documentXml);
+        var presentTags = FindContentControlTags(contentParts);
 
         return requiredTags
             .Where(t => presentTags.Contains(t) && !lockedTags.Contains(t))
