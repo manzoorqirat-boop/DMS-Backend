@@ -52,6 +52,59 @@ public class ControlledDocument : Entity, ITimestamped
         CreatedAt = DateTimeOffset.UtcNow;
     }
 
+    /// <summary>
+    /// Creates an annexure bound to <paramref name="parent"/>.
+    /// <para>
+    /// The number is derived from the parent's — <c>ND-QIC-SOP-0042-A1</c> — so the
+    /// relationship is legible on a printed page with no access to the system. Someone holding
+    /// a loose form can tell which procedure it belongs to.
+    /// </para>
+    /// <para>
+    /// It starts in the parent's current status rather than always as a Draft: an annexure
+    /// added to a document already in review must not appear to be an editable draft, and one
+    /// added to an effective document is in force immediately because its parent is.
+    /// </para>
+    /// </summary>
+    public static ControlledDocument CreateAnnexure(
+        ControlledDocument parent,
+        int annexureNumber,
+        string title,
+        Guid templateId,
+        string workingCopyKey,
+        string author)
+    {
+        ArgumentNullException.ThrowIfNull(parent);
+
+        if (parent.IsAnnexure)
+        {
+            throw new InvalidOperationException(
+                $"{parent.DocumentNumber} is itself an annexure. Annexures cannot be nested — "
+                + "an annexure belongs to exactly one parent document.");
+        }
+
+        if (annexureNumber < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(annexureNumber), annexureNumber, "Annexure numbering starts at 1.");
+        }
+
+        return new ControlledDocument(
+            $"{parent.DocumentNumber}-A{annexureNumber}",
+            title,
+            parent.SiteId,
+            parent.DepartmentId,
+            parent.DocumentTypeId,
+            templateId,
+            workingCopyKey,
+            author)
+        {
+            ParentDocumentId = parent.Id,
+            AnnexureNumber = annexureNumber,
+            Revision = parent.Revision,
+            Status = parent.Status,
+        };
+    }
+
     /// <summary>Issued once at creation and never reissued — the identity a controlled copy is traced by.</summary>
     public string DocumentNumber { get; private set; } = "";
 
@@ -69,6 +122,32 @@ public class ControlledDocument : Entity, ITimestamped
 
     /// <summary>0 for first issue. Incremented only when a revision cycle completes.</summary>
     public int Revision { get; private set; }
+
+    /// <summary>
+    /// The SOP this annexure belongs to, or null for a document that stands on its own.
+    /// <para>
+    /// An annexure is a controlled document in its own right — its own number, its own file,
+    /// its own controlled copies — but it is <b>not separately approvable</b>. It is signed,
+    /// issued and withdrawn as part of its parent's lifecycle, never on its own. Every
+    /// lifecycle method below refuses to act directly on an annexure for that reason; the
+    /// parent moves, and the annexures move with it.
+    /// </para>
+    /// <para>
+    /// Points at a specific revision rather than the family: annexure 1 of revision 2 is a
+    /// different document from annexure 1 of revision 1, and binding to the family would make
+    /// it ambiguous which revision's form an operator should be holding.
+    /// </para>
+    /// </summary>
+    public Guid? ParentDocumentId { get; private set; }
+
+    /// <summary>
+    /// Position among its parent's annexures — 1, 2, 3 — driving both the number suffix and
+    /// the order they print in. Null for a document that isn't an annexure.
+    /// </summary>
+    public int? AnnexureNumber { get; private set; }
+
+    /// <summary>True when this document is an annexure to another.</summary>
+    public bool IsAnnexure => ParentDocumentId is not null;
 
     /// <summary>
     /// Identifies the lineage this document belongs to — every revision of the same controlled
@@ -180,6 +259,8 @@ public class ControlledDocument : Entity, ITimestamped
     /// </summary>
     public void Withdraw()
     {
+        RefuseIfAnnexure(nameof(Withdraw));
+
         if (Status != DocumentStatus.Draft)
         {
             throw new InvalidOperationException(
@@ -198,6 +279,8 @@ public class ControlledDocument : Entity, ITimestamped
     /// </summary>
     public void SubmitForReview()
     {
+        RefuseIfAnnexure(nameof(SubmitForReview));
+
         if (Status != DocumentStatus.Draft)
         {
             throw new InvalidOperationException(
@@ -230,6 +313,13 @@ public class ControlledDocument : Entity, ITimestamped
     /// Every step on the route has been signed. Approved is not yet in force; issuance is a
     /// separate, dated act.
     /// </summary>
+    /// <remarks>
+    /// Deliberately <b>not</b> guarded against annexures, unlike the user-initiated transitions.
+    /// An annexure is a separate file and needs its own frozen copy and content hash — the
+    /// §11.70 binding is per-file, so a signature covering the parent alone would leave the
+    /// annexure's contents unattested. The workflow service calls this once per document when
+    /// the parent's route completes: parent first, then each annexure.
+    /// </remarks>
     public void MarkApproved(string approvedCopyKey, string approvedContentHash)
     {
         if (Status != DocumentStatus.InReview)
@@ -254,6 +344,8 @@ public class ControlledDocument : Entity, ITimestamped
     /// </summary>
     public void MakeEffective(DateOnly effectiveDate, DateOnly today, DateOnly? nextReviewDate = null)
     {
+        RefuseIfAnnexure(nameof(MakeEffective));
+
         if (Status != DocumentStatus.Approved)
         {
             throw new InvalidOperationException(
@@ -298,6 +390,10 @@ public class ControlledDocument : Entity, ITimestamped
     }
 
     /// <summary>Replaced by a later revision that is now in force.</summary>
+    /// <remarks>
+    /// Not guarded against annexures for the same reason as <see cref="MarkApproved"/>: this is
+    /// reached through a parent's supersession, not by a user acting on an annexure directly.
+    /// </remarks>
     public void Supersede()
     {
         if (Status != DocumentStatus.Effective)
@@ -316,6 +412,8 @@ public class ControlledDocument : Entity, ITimestamped
     /// </summary>
     public void MakeObsolete(string reason)
     {
+        RefuseIfAnnexure(nameof(MakeObsolete));
+
         if (Status is not (DocumentStatus.Effective or DocumentStatus.Superseded))
         {
             throw new InvalidOperationException(
@@ -349,6 +447,8 @@ public class ControlledDocument : Entity, ITimestamped
     /// </summary>
     public ControlledDocument BeginRevision(string workingCopyKey, string author)
     {
+        RefuseIfAnnexure(nameof(BeginRevision));
+
         if (Status != DocumentStatus.Effective)
         {
             throw new InvalidOperationException(
@@ -445,6 +545,62 @@ public class ControlledDocument : Entity, ITimestamped
     }
 
     private void Touch() => UpdatedAt = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// Refuses a lifecycle operation attempted directly on an annexure.
+    /// <para>
+    /// The whole invariant in one place: an annexure is signed, issued and withdrawn as part of
+    /// its parent's lifecycle and never on its own. Allowing a direct transition would let an
+    /// annexure become effective while its parent was still in review — a form in circulation
+    /// for a procedure that isn't in force, which is precisely the failure a controlled-document
+    /// system exists to prevent.
+    /// </para>
+    /// </summary>
+    private void RefuseIfAnnexure(string operation)
+    {
+        if (IsAnnexure)
+        {
+            throw new InvalidOperationException(
+                $"{operation} cannot be performed directly on {DocumentNumber}: it is an "
+                + "annexure. Perform the operation on its parent document, and the annexure "
+                + "will follow.");
+        }
+    }
+
+    /// <summary>
+    /// Moves this annexure to match its parent. The only way an annexure's status ever changes.
+    /// <para>
+    /// Deliberately assigns rather than validating a transition path: the parent has already
+    /// enforced which transitions are legal, and re-deriving that here would mean two sets of
+    /// rules that could disagree. What this does enforce is that it is only ever called on an
+    /// annexure, and only by the parent.
+    /// </para>
+    /// </summary>
+    /// <param name="parent">Passed so the caller cannot cascade from an unrelated document.</param>
+    public void FollowParent(ControlledDocument parent)
+    {
+        ArgumentNullException.ThrowIfNull(parent);
+
+        if (!IsAnnexure)
+        {
+            throw new InvalidOperationException(
+                $"{DocumentNumber} is not an annexure and has no parent to follow.");
+        }
+
+        if (parent.Id != ParentDocumentId)
+        {
+            throw new InvalidOperationException(
+                $"{DocumentNumber} is an annexure of a different document, not {parent.DocumentNumber}.");
+        }
+
+        Status = parent.Status;
+        EffectiveDate = parent.EffectiveDate;
+        NextReviewDate = parent.NextReviewDate;
+        ObsoleteReason = parent.ObsoleteReason;
+        IsCurrentRevision = parent.IsCurrentRevision;
+
+        Touch();
+    }
 
     private static string RequireNonEmpty(string value, string paramName) =>
         string.IsNullOrWhiteSpace(value)
