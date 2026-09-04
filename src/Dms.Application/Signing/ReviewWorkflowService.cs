@@ -346,6 +346,33 @@ public sealed class ReviewWorkflowService(
                         audit.Record(
                             AuditAction.DocumentApproved, EntityType, document.Id, document.DocumentNumber,
                             $"All {route.Count} step(s) signed. Approved content {contentHash[..16]}…");
+
+                        // Annexures are approved with their parent — they are never separately
+                        // approvable — but each still gets its OWN frozen copy and content hash.
+                        // The §11.70 binding is per-file: a signature covering only the parent
+                        // would leave the annexure's contents unattested, so a form could be
+                        // altered after approval without the hash check ever noticing.
+                        foreach (var annexure in await documents.ListAnnexuresAsync(document.Id, ct))
+                        {
+                            var annexureContent = await documentFiles.ReadAsync(annexure.WorkingCopyKey, ct);
+                            if (annexureContent is null)
+                            {
+                                throw new InvalidOperationException(
+                                    $"The working copy for annexure {annexure.DocumentNumber} is missing, "
+                                    + "so it cannot be approved with its parent.");
+                            }
+
+                            var annexureKey = $"approved/{annexure.Id:N}-r{annexure.Revision}.docx";
+                            await documentFiles.SaveAsync(annexureKey, annexureContent, ct);
+
+                            var annexureHash = ContentHasher.Hash(annexureContent);
+                            annexure.MarkApproved(annexureKey, annexureHash);
+
+                            audit.Record(
+                                AuditAction.DocumentApproved, EntityType, annexure.Id, annexure.DocumentNumber,
+                                $"Approved with parent {document.DocumentNumber}. "
+                                + $"Approved content {annexureHash[..16]}…");
+                        }
                     }
                 }
 
@@ -462,6 +489,31 @@ public sealed class ReviewWorkflowService(
             }
 
             document.PromoteToCurrent();
+
+            // Annexures follow into force. Without this they would stay in whatever status
+            // they were created in — and because every direct transition on an annexure is
+            // refused, nobody could move them by hand either. A form left behind while its
+            // procedure went effective is exactly the mismatch this cascade prevents.
+            foreach (var annexure in await documents.ListAnnexuresAsync(document.Id, cancellationToken))
+            {
+                annexure.FollowParent(document);
+
+                audit.Record(
+                    AuditAction.DocumentMadeEffective, EntityType, annexure.Id, annexure.DocumentNumber,
+                    $"Made effective with parent {document.DocumentNumber}.");
+            }
+
+            if (predecessor is not null && predecessor.Id != document.Id)
+            {
+                foreach (var annexure in await documents.ListAnnexuresAsync(predecessor.Id, cancellationToken))
+                {
+                    annexure.FollowParent(predecessor);
+
+                    audit.Record(
+                        AuditAction.DocumentSuperseded, EntityType, annexure.Id, annexure.DocumentNumber,
+                        $"Superseded with parent {predecessor.DocumentNumber}.");
+                }
+            }
         }
         catch (InvalidOperationException ex)
         {
