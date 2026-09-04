@@ -7,7 +7,13 @@ public sealed record IssueCopyRequest(
     CopyType CopyType,
     Guid? IssuedToDepartmentId,
     string IssuedToName,
-    int? PrintLimit);
+    int? PrintLimit,
+    /// <summary>
+    /// The issuer's signing credential. Required when the IssueCopy signature point is on,
+    /// which it is by default — putting paper into circulation should be a deliberate act, not
+    /// something an unattended session can do.
+    /// </summary>
+    string? Password = null);
 
 public sealed record DistributionView(
     Guid Id,
