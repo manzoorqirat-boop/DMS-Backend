@@ -196,6 +196,14 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
 
     public void Add(ControlledDocument document) => db.ControlledDocuments.Add(document);
 
+    public async Task<IReadOnlyList<ControlledDocument>> ListAnnexuresAsync(
+        Guid parentDocumentId,
+        CancellationToken cancellationToken) =>
+        await db.ControlledDocuments
+            .Where(x => x.ParentDocumentId == parentDocumentId)
+            .OrderBy(x => x.AnnexureNumber)
+            .ToListAsync(cancellationToken);
+
     public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
         SaveChangesTranslator.SaveAsync(db, cancellationToken);
 
