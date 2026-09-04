@@ -1,5 +1,6 @@
 using Dms.Application.Abstractions;
 using Dms.Application.Common;
+using Dms.Application.Signing;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 
@@ -14,6 +15,7 @@ namespace Dms.Application.Documents;
 /// </summary>
 public sealed class DocumentLifecycleService(
     IControlledDocumentRepository documents,
+    ActionSignatureService actionSignatures,
     IReviewPolicyRepository policies,
     IDocumentTypeRepository documentTypes,
     IAccessControl access,
@@ -59,6 +61,7 @@ public sealed class DocumentLifecycleService(
     public async Task<Result<DocumentSummary>> RecordPeriodicReviewAsync(
         Guid documentId,
         string outcome,
+        string? password,
         CancellationToken cancellationToken)
     {
         if (currentUser.UserName is not { } reviewer || string.IsNullOrWhiteSpace(reviewer))
@@ -108,6 +111,34 @@ public sealed class DocumentLifecycleService(
 
         try
         {
+// Signature point. A periodic review asserts the document is still correct — that is a
+        // professional judgement, and §11.50 wants the meaning of a signature recorded with it.
+        var required = await actionSignatures.RequireAsync(
+            ControlledAction.PeriodicReview,
+            EntityType,
+            document.Id,
+            $"{document.DocumentNumber} Rev {document.Revision:00}",
+            document.SiteId,
+            document.DepartmentId,
+            password,
+            new { Outcome = outcome },
+            cancellationToken);
+
+        if (!required.IsSuccess)
+        {
+            return required.Error!;
+        }
+
+        if (required.Value.Outcome == ActionSignatureService.Outcome.Queued)
+        {
+            await documents.SaveChangesAsync(cancellationToken);
+
+            return Error.Conflict(
+                "awaiting_countersignature",
+                "The review is recorded and awaiting countersignature. The review date has not "
+                + "yet been reset.");
+        }
+
             document.RecordPeriodicReview(nextDue.Value, reviewer);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
@@ -138,6 +169,7 @@ public sealed class DocumentLifecycleService(
     public async Task<Result<DocumentSummary>> MakeObsoleteAsync(
         Guid documentId,
         string reason,
+        string? password,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(currentUser.UserName))
@@ -161,6 +193,35 @@ public sealed class DocumentLifecycleService(
             return Error.Validation(
                 "permission_denied",
                 $"{Permission.DocumentObsolete} is required for this document's site and department.");
+        }
+
+        // Signature point. MakeObsolete defaults to requiring authorisation before it takes
+        // effect — withdrawal is terminal, and a document withdrawn in error cannot be brought
+        // back into force, only replaced.
+        var required = await actionSignatures.RequireAsync(
+            ControlledAction.MakeObsolete,
+            EntityType,
+            document.Id,
+            $"{document.DocumentNumber} Rev {document.Revision:00}",
+            document.SiteId,
+            document.DepartmentId,
+            password,
+            new { Reason = reason },
+            cancellationToken);
+
+        if (!required.IsSuccess)
+        {
+            return required.Error!;
+        }
+
+        if (required.Value.Outcome == ActionSignatureService.Outcome.Queued)
+        {
+            await documents.SaveChangesAsync(cancellationToken);
+
+            return Error.Conflict(
+                "awaiting_countersignature",
+                $"The withdrawal of {document.DocumentNumber} is recorded and awaiting "
+                + "authorisation. The document remains in force until then.");
         }
 
         var wasCurrent = document.IsCurrentRevision;
