@@ -116,6 +116,21 @@ public static class DocumentEndpoints
         // The approved artefact, with its signature manifest. Generated on first request and
         // cached — see ApprovedPdfService for why this isn't produced at the moment of
         // approval.
+        // Annexures. Created under a parent rather than at the top level, because an annexure
+        // without a parent is not a thing this system can represent.
+        group.MapPost("/{id:guid}/annexures", async (
+            DraftCreationService service,
+            Guid id,
+            CreateAnnexureRequest request,
+            CancellationToken ct) =>
+            (await service.CreateAnnexureAsync(id, request, ct)).ToHttpResult());
+
+        group.MapGet("/{id:guid}/annexures", async (
+            DraftCreationService service,
+            Guid id,
+            CancellationToken ct) =>
+            (await service.ListAnnexuresAsync(id, ct)).ToHttpResult());
+
         group.MapGet("/{id:guid}/approved-pdf", async (
             ApprovedPdfService service,
             Guid id,
