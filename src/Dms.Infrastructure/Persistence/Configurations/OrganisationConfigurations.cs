@@ -80,6 +80,18 @@ public class ControlledDocumentConfiguration : IEntityTypeConfiguration<Controll
         builder.Property(x => x.WorkingCopyKey).HasMaxLength(500).IsRequired();
         builder.Property(x => x.Author).HasMaxLength(128).IsRequired();
 
+        // Annexures. Restrict rather than Cascade: deleting a parent must never silently remove
+        // controlled documents that have their own numbers, files and issued copies. Nothing in
+        // this system deletes a document anyway — it is withdrawn or obsoleted — so a cascade
+        // here could only ever fire by mistake.
+        builder.HasOne<ControlledDocument>()
+            .WithMany()
+            .HasForeignKey(x => x.ParentDocumentId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(x => new { x.ParentDocumentId, x.AnnexureNumber })
+            .HasDatabaseName("ix_controlled_documents_parent_annexure");
+
         builder.HasOne<Site>().WithMany().HasForeignKey(x => x.SiteId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Department>().WithMany().HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<DocumentType>().WithMany().HasForeignKey(x => x.DocumentTypeId).OnDelete(DeleteBehavior.Restrict);
