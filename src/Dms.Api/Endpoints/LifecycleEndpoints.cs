@@ -17,7 +17,7 @@ public static class LifecycleEndpoints
             Guid id,
             PeriodicReviewRequest request,
             CancellationToken ct) =>
-            (await service.RecordPeriodicReviewAsync(id, request.Outcome, ct)).ToHttpResult());
+            (await service.RecordPeriodicReviewAsync(id, request.Outcome, request.Password, ct)).ToHttpResult());
 
         // Withdraws from use with no replacement. Terminal, and not a delete — the record is
         // retained and anything citing it must still resolve.
@@ -26,7 +26,7 @@ public static class LifecycleEndpoints
             Guid id,
             ObsoleteRequest request,
             CancellationToken ct) =>
-            (await service.MakeObsoleteAsync(id, request.Reason, ct)).ToHttpResult());
+            (await service.MakeObsoleteAsync(id, request.Reason, request.Password, ct)).ToHttpResult());
 
         var reports = app.MapGroup("/api/reports").WithTags("Reports");
 
@@ -51,7 +51,7 @@ public static class LifecycleEndpoints
             Guid id,
             RecordDispositionRequest request,
             CancellationToken ct) =>
-            (await service.RecordDispositionAsync(id, request.Action, request.Note, ct)).ToHttpResult());
+            (await service.RecordDispositionAsync(id, request.Action, request.Note, request.Password, ct)).ToHttpResult());
 
         // Nothing acts on this automatically. Expiry makes a record eligible; a person decides.
         reports.MapGet("/disposition-due", async (
@@ -114,8 +114,8 @@ public static class LifecycleEndpoints
     }
 }
 
-public sealed record PeriodicReviewRequest(string Outcome);
+public sealed record PeriodicReviewRequest(string Outcome, string? Password = null);
 
-public sealed record ObsoleteRequest(string Reason);
+public sealed record ObsoleteRequest(string Reason, string? Password = null);
 
 public sealed record UpdateReviewPolicyRequest(int ReviewIntervalMonths);
