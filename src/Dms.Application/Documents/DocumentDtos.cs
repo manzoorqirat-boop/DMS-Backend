@@ -96,3 +96,20 @@ public sealed record IntegrityCheckResult(
     string DocumentNumber,
     bool IsValid,
     IReadOnlyList<string> Findings);
+
+
+/// <summary>
+/// Body of POST /api/documents/{id}/annexures.
+/// <para>
+/// No site, department or parent: all three come from the parent document. An annexure that
+/// could belong to a different site than the SOP it serves would be incoherent, so those are
+/// not the caller's to choose.
+/// </para>
+/// </summary>
+public sealed record CreateAnnexureRequest(
+    string Title,
+    /// <summary>
+    /// The annexure's own type — typically a form or record type rather than the parent's SOP
+    /// type, since the two look nothing alike.
+    /// </summary>
+    Guid DocumentTypeId);
