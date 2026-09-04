@@ -149,6 +149,61 @@ public sealed class DocumentRevisionService(
             $"{revision.DocumentNumber} Rev {revision.Revision:00}",
             $"Revised from Rev {source.Revision:00}. Reason: {reason.Trim()}");
 
+        // Annexures are carried forward as fresh drafts of the new revision.
+        //
+        // Without this, revising an SOP would silently orphan its forms: the new revision would
+        // go effective carrying no annexures at all, while the previous revision's forms
+        // superseded along with it. An operator would be left following a current procedure
+        // with no record sheet to fill in — and nobody would see it happen, because nothing
+        // would have failed.
+        //
+        // Each carried annexure is a copy of its predecessor's CURRENT content, not a blank
+        // template: revising a procedure rarely means rewriting its forms from scratch, and
+        // starting from the existing form is what an author expects.
+        var sourceAnnexures = await documents.ListAnnexuresAsync(source.Id, cancellationToken);
+        var carriedKeys = new List<string>();
+
+        foreach (var sourceAnnexure in sourceAnnexures)
+        {
+            var annexureContent = await documentFiles.ReadAsync(
+                sourceAnnexure.ApprovedCopyKey ?? sourceAnnexure.WorkingCopyKey, cancellationToken);
+
+            if (annexureContent is null)
+            {
+                // Cleaning up what was already written: the blob store isn't transactional, so
+                // an early return here would otherwise leave orphaned files behind.
+                await documentFiles.DeleteAsync(workingCopyKey, CancellationToken.None);
+                foreach (var key in carriedKeys)
+                {
+                    await documentFiles.DeleteAsync(key, CancellationToken.None);
+                }
+
+                return Error.NotFound(
+                    "annexure_file_missing",
+                    $"The stored file for annexure {sourceAnnexure.DocumentNumber} is missing, "
+                    + "so the revision cannot carry it forward.");
+            }
+
+            var annexureKey = $"documents/{Uuid7.NewGuid():N}.docx";
+            carriedKeys.Add(annexureKey);
+
+            var carried = ControlledDocument.CreateAnnexure(
+                revision,
+                sourceAnnexure.AnnexureNumber ?? 1,
+                sourceAnnexure.Title,
+                sourceAnnexure.TemplateId,
+                annexureKey,
+                author);
+
+            await documentFiles.SaveAsync(annexureKey, annexureContent, cancellationToken);
+
+            documents.Add(carried);
+            audit.Record(
+                AuditAction.DocumentRevisionStarted, EntityType, carried.Id,
+                $"{carried.DocumentNumber} Rev {carried.Revision:00}",
+                $"Carried forward from {sourceAnnexure.DocumentNumber} with the parent's revision.");
+        }
+
         var outcome = await documents.SaveChangesAsync(cancellationToken);
         if (!outcome.Saved)
         {
