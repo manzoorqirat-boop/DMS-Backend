@@ -56,6 +56,7 @@ public interface IControlledDocumentRepository
         Guid? departmentId,
         Guid? documentTypeId,
         bool currentRevisionsOnly,
+        bool includeAnnexures,
         string? search,
         DocumentStatus? status,
         PagedRequest paging,
