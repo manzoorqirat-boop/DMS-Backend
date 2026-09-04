@@ -300,6 +300,83 @@ public sealed class ActionSignatureService(
             : Error.Conflict("countersignature_save_conflict", "The countersignature could not be saved.");
     }
 
+    /// <summary>The current signature points. Open to any authenticated caller.</summary>
+    public async Task<Result<IReadOnlyList<SignaturePointView>>> GetPolicyAsync(
+        CancellationToken cancellationToken)
+    {
+        var policy = await policies.GetAsync(cancellationToken);
+
+        return Result<IReadOnlyList<SignaturePointView>>.Success(
+            policy.Points.Select(SignaturePointView.From).ToList());
+    }
+
+    /// <summary>
+    /// Changes which actions require signing.
+    /// <para>
+    /// Gated on <see cref="Permission.UserManage"/> at organisation scope — the same permission
+    /// that governs creating accounts, because weakening a signature requirement and issuing an
+    /// over-privileged account are the same act reached by different routes.
+    /// </para>
+    /// </summary>
+    public async Task<Result<IReadOnlyList<SignaturePointView>>> UpdatePolicyAsync(
+        UpdateSignaturePolicyRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserName is not { } actor || string.IsNullOrWhiteSpace(actor))
+        {
+            return Error.Validation("actor_unknown", "The acting user could not be determined.");
+        }
+
+        var allowed = await access.HasPermissionAsync(
+            Permission.UserManage, siteId: null, departmentId: null, cancellationToken);
+
+        if (!allowed)
+        {
+            return Error.Validation(
+                "permission_denied",
+                $"{Permission.UserManage} at organisation-wide scope is required to change "
+                + "signature requirements.");
+        }
+
+        var policy = await policies.GetAsync(cancellationToken);
+
+        // Captured before the change so the audit entry can show what actually moved. "The
+        // signature policy was changed" tells an inspector far less than "CloseOutCopy stopped
+        // requiring a countersignature".
+        var before = Describe(policy.Points);
+
+        try
+        {
+            policy.Update(
+                request.Points
+                    .Select(p => new SignaturePoint(
+                        p.Action, p.RequiresSignature, p.RequiresSecondSignature,
+                        p.Timing, p.SecondSignerPermission))
+                    .ToList(),
+                actor);
+        }
+        catch (ArgumentException ex)
+        {
+            return Error.Validation("signature_floor", ex.Message);
+        }
+
+        audit.Record(
+            AuditAction.SignaturePolicyChanged, EntityType, policy.Id, "Signature policy",
+            $"Changed from [{before}] to [{Describe(policy.Points)}].");
+
+        var outcome = await policies.SaveChangesAsync(cancellationToken);
+
+        return outcome.Saved
+            ? Result<IReadOnlyList<SignaturePointView>>.Success(
+                policy.Points.Select(SignaturePointView.From).ToList())
+            : Error.Conflict("policy_save_conflict", "The signature policy could not be saved.");
+    }
+
+    private static string Describe(IReadOnlyList<SignaturePoint> points) =>
+        string.Join("; ", points.Select(p =>
+            $"{p.Action}={(p.RequiresSignature ? "sign" : "none")}"
+            + (p.RequiresSecondSignature ? $"+counter({p.Timing})" : "")));
+
     /// <summary>Everything still waiting on a countersignature, oldest first.</summary>
     public async Task<Result<IReadOnlyList<PendingAction>>> ListAwaitingAsync(
         CancellationToken cancellationToken) =>
