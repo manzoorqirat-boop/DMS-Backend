@@ -216,6 +216,7 @@ if (!string.IsNullOrWhiteSpace(app.Configuration[Dms.Infrastructure.Editing.Edit
 }
 
 app.MapReviewEndpoints();
+app.MapPendingActionEndpoints();
 app.MapAuditEndpoints();
 app.MapExportEndpoints();
 
