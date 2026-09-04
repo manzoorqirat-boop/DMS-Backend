@@ -182,6 +182,28 @@ public sealed class DocumentLifecycleService(
             return Error.Conflict("document_not_obsoletable", ex.Message);
         }
 
+        // Annexures are withdrawn with their parent.
+        //
+        // A form left effective after its procedure is withdrawn is worse than an orphan: it
+        // reads as a current controlled document, so someone could fill one in for a procedure
+        // that no longer exists. And because every direct transition on an annexure is refused,
+        // nobody could withdraw it by hand afterwards either — it would be stranded effective
+        // permanently.
+        //
+        // Each gets its own retention clock started, because each is a separate record with its
+        // own file and its own disposition decision to come.
+        foreach (var annexure in await documents.ListAnnexuresAsync(document.Id, cancellationToken))
+        {
+            annexure.FollowParent(document);
+
+            await retention.StartRetentionAsync(annexure, RetentionTrigger.Obsolete, cancellationToken);
+
+            audit.Record(
+                AuditAction.DocumentObsoleted, EntityType, annexure.Id,
+                $"{annexure.DocumentNumber} Rev {annexure.Revision:00}",
+                $"Withdrawn with parent {document.DocumentNumber}. Reason: {reason}");
+        }
+
         // Retention runs from the moment the record leaves active use.
         await retention.StartRetentionAsync(document, RetentionTrigger.Obsolete, cancellationToken);
 
