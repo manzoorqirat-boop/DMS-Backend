@@ -1,357 +1,229 @@
 using Dms.Application.Abstractions;
 using Dms.Application.Common;
+using Dms.Application.Metadata;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Dms.Domain.Services;
+using Dms.Domain.Common;
 
-namespace Dms.Application.Distribution;
+namespace Dms.Application.Documents;
 
 /// <summary>
-/// Issue, acknowledgement, controlled printing and retrieval of physical copies.
+/// The revision cycle: opening revision <i>n+1</i> of a document already in force, and
+/// reading a document's full revision history.
 /// <para>
-/// The register of who holds what is the reason this exists. When a document is superseded or
-/// withdrawn, every controlled copy in circulation has to be physically collected — and that
-/// is only possible if the system recorded where each one went.
+/// A revision is a new record sharing the predecessor's document number and lineage, not an
+/// edit of it. The version that was effective keeps its content, its signatures and the hash
+/// binding them — which is what lets anyone answer "what did this SOP actually say in March"
+/// two years later.
 /// </para>
 /// </summary>
-public sealed class DistributionService(
-    IDistributionRepository distributions,
+public sealed class DocumentRevisionService(
     IControlledDocumentRepository documents,
+    ISiteRepository sites,
     IDepartmentRepository departments,
+    IDocumentTypeRepository documentTypes,
+    ITemplateRepository templates,
+    ITemplateFileStore templateFiles,
     IDocumentFileStore documentFiles,
-    IControlledPrintRenderer renderer,
+    MetadataFieldService metadataFields,
     IAccessControl access,
     IAuditTrail audit,
     ICurrentUser currentUser)
 {
-    private const string EntityType = "DocumentDistribution";
+    private const string EntityType = "ControlledDocument";
 
     /// <summary>
-    /// Issues a numbered copy of an effective document.
+    /// Opens the next revision as a fresh Draft.
     /// <para>
-    /// Restricted to Effective documents. Distributing a draft or an approved-but-not-yet-in-
-    /// force version puts a procedure into someone's hands before it is the procedure, which
-    /// is the distribution failure that actually causes harm on a shop floor.
+    /// The new draft is built from the document type's <b>currently active template</b>, not
+    /// from a copy of the predecessor's file. That's the consequential choice here: a revision
+    /// should pick up whatever the approved template now looks like — a changed header, a new
+    /// mandated footer — rather than perpetuating a template version that may since have been
+    /// retired for a reason. The author re-enters the body content, which is also the point at
+    /// which a revision gets reviewed rather than rubber-stamped.
     /// </para>
     /// </summary>
-    public async Task<Result<DistributionView>> IssueAsync(
+    public async Task<Result<DocumentSummary>> BeginRevisionAsync(
         Guid documentId,
-        IssueCopyRequest request,
+        string reason,
         CancellationToken cancellationToken)
     {
-        if (currentUser.UserName is not { } actor || string.IsNullOrWhiteSpace(actor))
+        if (currentUser.UserName is not { } author || string.IsNullOrWhiteSpace(author))
         {
             return Error.Validation(
                 "actor_unknown",
-                "The acting user could not be determined. Copy issue must be attributable.");
+                "The acting user could not be determined. Revisions must be attributable.");
         }
 
-        var document = await documents.GetAsync(documentId, cancellationToken);
-        if (document is null)
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            // A revision without a stated reason is the thing an inspector asks about first.
+            return Error.Validation(
+                "revision_reason_required",
+                "State why the document is being revised.");
+        }
+
+        var source = await documents.GetAsync(documentId, cancellationToken);
+        if (source is null)
         {
             return Error.NotFound("document_not_found", $"No document with id {documentId}.");
         }
 
         var permitted = await access.HasPermissionAsync(
-            Permission.DocumentIssue, document.SiteId, document.DepartmentId, cancellationToken);
+            Permission.DocumentCreate, source.SiteId, source.DepartmentId, cancellationToken);
 
         if (!permitted)
         {
             return Error.Validation(
                 "permission_denied",
-                $"{Permission.DocumentIssue} is required for this document's site and department.");
+                $"{Permission.DocumentCreate} is required for this document's site and department.");
         }
 
-        if (document.Status != DocumentStatus.Effective)
+        // Checked before the entity guard so the caller gets a specific message: "someone else
+        // is already revising this" is a different problem from "this version isn't in force".
+        var inFlight = await documents.GetInFlightRevisionAsync(source.FamilyId, cancellationToken);
+        if (inFlight is not null)
         {
             return Error.Conflict(
-                "document_not_distributable",
-                $"{document.DocumentNumber} is {document.Status}; only an "
-                + $"{DocumentStatus.Effective} document can be distributed.");
+                "revision_already_open",
+                $"Revision {inFlight.Revision} of {inFlight.DocumentNumber} is already open "
+                + $"({inFlight.Status}). Complete or withdraw it before starting another.");
         }
 
-        if (request.IssuedToDepartmentId is { } departmentId)
+        var context = await LoadContextAsync(source, cancellationToken);
+        if (!context.IsSuccess)
         {
-            var department = await departments.GetAsync(departmentId, cancellationToken);
-            if (department is null)
-            {
-                return Error.NotFound("department_not_found", $"No department with id {departmentId}.");
-            }
+            return context.Error!;
         }
 
-        // A controlled copy with no print limit can be reprinted indefinitely, which makes the
-        // copy number meaningless — the one thing that distinguishes it from an uncontrolled
-        // printout. Uncontrolled copies may legitimately be unlimited.
-        if (request.CopyType != CopyType.Uncontrolled && request.PrintLimit is null)
+        var (site, department, documentType) = context.Value;
+
+        var template = await templates.GetActiveAsync(source.DocumentTypeId, cancellationToken);
+        if (template is null)
         {
-            return Error.Validation(
-                "print_limit_required",
-                $"A {request.CopyType} copy needs a print limit; only an "
-                + $"{CopyType.Uncontrolled} copy may be unlimited.");
-        }
-
-        var highest = await distributions.GetHighestCopyNumberAsync(documentId, cancellationToken);
-
-        DocumentDistribution copy;
-        try
-        {
-            copy = new DocumentDistribution(
-                documentId,
-                highest + 1,
-                request.CopyType,
-                request.IssuedToDepartmentId,
-                request.IssuedToName,
-                actor,
-                request.PrintLimit);
-        }
-        catch (Exception ex) when (ex is ArgumentException or ArgumentOutOfRangeException)
-        {
-            return Error.Validation("copy_invalid", ex.Message);
-        }
-
-        distributions.Add(copy);
-        audit.Record(
-            AuditAction.CopyIssued, EntityType, copy.Id,
-            $"{document.DocumentNumber} Rev {document.Revision:00} copy {copy.CopyNumber}",
-            $"{copy.CopyType} copy issued to {copy.IssuedToName}"
-            + (copy.PrintLimit is { } limit ? $", print limit {limit}." : ", unlimited prints."));
-
-        var outcome = await distributions.SaveChangesAsync(cancellationToken);
-        if (!outcome.Saved)
-        {
-            return outcome.ViolatedIndexContains("copy_number")
-                ? Error.Conflict(
-                    "copy_number_conflict",
-                    "Another copy was issued concurrently and took that number. Retry.")
-                : Error.Conflict("copy_save_conflict", "The copy could not be issued.");
-        }
-
-        return DistributionView.From(copy, ScanCodeFor(document, copy));
-    }
-
-    public async Task<Result<DistributionView>> AcknowledgeAsync(
-        Guid distributionId,
-        CancellationToken cancellationToken)
-    {
-        var loaded = await LoadAsync(distributionId, cancellationToken);
-        if (!loaded.IsSuccess)
-        {
-            return loaded.Error!;
-        }
-
-        var (copy, document) = loaded.Value;
-
-        // Acknowledgement is the recipient's own act, so it is attributable to whoever is
-        // logged in rather than to the issuer recording it on their behalf.
-        if (currentUser.UserName is not { } actor || string.IsNullOrWhiteSpace(actor))
-        {
-            return Error.Validation("actor_unknown", "The acting user could not be determined.");
-        }
-
-        try
-        {
-            copy.Acknowledge(actor);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
-        {
-            return Error.Conflict("copy_not_acknowledgeable", ex.Message);
-        }
-
-        audit.Record(
-            AuditAction.CopyAcknowledged, EntityType, copy.Id,
-            $"{document.DocumentNumber} copy {copy.CopyNumber}",
-            $"Receipt confirmed by {actor}.");
-
-        var outcome = await distributions.SaveChangesAsync(cancellationToken);
-        return outcome.Saved
-            ? DistributionView.From(copy, ScanCodeFor(document, copy))
-            : Error.Conflict("copy_save_conflict", "The acknowledgement could not be recorded.");
-    }
-
-    public async Task<Result<DistributionView>> RetrieveAsync(
-        Guid distributionId,
-        CancellationToken cancellationToken)
-    {
-        var loaded = await LoadAsync(distributionId, cancellationToken);
-        if (!loaded.IsSuccess)
-        {
-            return loaded.Error!;
-        }
-
-        var (copy, document) = loaded.Value;
-
-        var gate = await RequireIssuePermissionAsync(document, cancellationToken);
-        if (gate is not null)
-        {
-            return gate;
-        }
-
-        try
-        {
-            copy.Retrieve(currentUser.UserName!);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
-        {
-            return Error.Conflict("copy_not_retrievable", ex.Message);
-        }
-
-        audit.Record(
-            AuditAction.CopyRetrieved, EntityType, copy.Id,
-            $"{document.DocumentNumber} copy {copy.CopyNumber}",
-            $"Collected from {copy.IssuedToName}.");
-
-        var outcome = await distributions.SaveChangesAsync(cancellationToken);
-        return outcome.Saved
-            ? DistributionView.From(copy, ScanCodeFor(document, copy))
-            : Error.Conflict("copy_save_conflict", "The retrieval could not be recorded.");
-    }
-
-    /// <summary>
-    /// Closes out a copy that can't be collected — destroyed on site, or lost. Both require a
-    /// note; a copy that simply disappears from the register without explanation is worse than
-    /// one recorded as missing.
-    /// </summary>
-    public async Task<Result<DistributionView>> CloseOutAsync(
-        Guid distributionId,
-        CloseOutRequest request,
-        CancellationToken cancellationToken)
-    {
-        var loaded = await LoadAsync(distributionId, cancellationToken);
-        if (!loaded.IsSuccess)
-        {
-            return loaded.Error!;
-        }
-
-        var (copy, document) = loaded.Value;
-
-        var gate = await RequireIssuePermissionAsync(document, cancellationToken);
-        if (gate is not null)
-        {
-            return gate;
-        }
-
-        try
-        {
-            copy.CloseOut(request.Outcome, request.Note, currentUser.UserName!);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
-        {
-            return Error.Conflict("copy_not_closeable", ex.Message);
-        }
-
-        audit.Record(
-            AuditAction.CopyClosedOut, EntityType, copy.Id,
-            $"{document.DocumentNumber} copy {copy.CopyNumber}",
-            $"Recorded as {request.Outcome}. {request.Note.Trim()}");
-
-        var outcome = await distributions.SaveChangesAsync(cancellationToken);
-        return outcome.Saved
-            ? DistributionView.From(copy, ScanCodeFor(document, copy))
-            : Error.Conflict("copy_save_conflict", "The close-out could not be recorded.");
-    }
-
-    /// <summary>
-    /// Produces a print of a copy, enforcing its limit and recording the event.
-    /// <para>
-    /// A refused print is audited too. Someone repeatedly hitting a print limit is a signal —
-    /// either the limit is wrong or copies are going somewhere they shouldn't — and it is only
-    /// visible if the refusals are recorded rather than silently returned as an error.
-    /// </para>
-    /// </summary>
-    public async Task<Result<PrintResult>> PrintAsync(
-        Guid distributionId,
-        CancellationToken cancellationToken)
-    {
-        var loaded = await LoadAsync(distributionId, cancellationToken);
-        if (!loaded.IsSuccess)
-        {
-            return loaded.Error!;
-        }
-
-        var (copy, document) = loaded.Value;
-
-        if (currentUser.UserName is not { } actor || string.IsNullOrWhiteSpace(actor))
-        {
-            return Error.Validation("actor_unknown", "The acting user could not be determined.");
-        }
-
-        if (!copy.CanPrint)
-        {
-            audit.Record(
-                AuditAction.CopyPrintRefused, EntityType, copy.Id,
-                $"{document.DocumentNumber} copy {copy.CopyNumber}",
-                copy.IsOutstanding
-                    ? $"Print limit of {copy.PrintLimit} already reached."
-                    : $"Copy is {copy.Status} and cannot be reprinted.");
-
-            await distributions.SaveChangesAsync(cancellationToken);
-
             return Error.Conflict(
-                "print_not_permitted",
-                copy.IsOutstanding
-                    ? $"Copy {copy.CopyNumber} has reached its print limit of {copy.PrintLimit}."
-                    : $"Copy {copy.CopyNumber} is {copy.Status} and cannot be reprinted.");
+                "no_active_template",
+                $"Document type '{documentType.Code}' has no active template, so a revision can't be started.");
         }
 
-        // Read after the permission and limit checks, so a refused print never touches the
-        // blob store.
-        var documentContent = await documentFiles.ReadAsync(document.WorkingCopyKey, cancellationToken);
-        if (documentContent is null)
+        var templateBytes = await templateFiles.ReadAsync(template.StorageKey, cancellationToken);
+        if (templateBytes is null)
         {
             return Error.NotFound(
-                "document_file_missing",
-                $"The stored file for {document.DocumentNumber} is missing.");
+                "template_file_missing",
+                $"The stored file for the active template of '{documentType.Code}' is missing.");
         }
 
-        int sequence;
+        var workingCopyKey = $"documents/{Uuid7.NewGuid():N}.docx";
+
+        ControlledDocument revision;
         try
         {
-            sequence = copy.RecordPrint();
+            revision = source.BeginRevision(workingCopyKey, author);
         }
         catch (InvalidOperationException ex)
         {
-            return Error.Conflict("print_not_permitted", ex.Message);
+            return Error.Conflict("document_not_revisable", ex.Message);
         }
 
-        var watermark = ControlledCopyWatermark.Compose(
-            copy.CopyType,
-            document.DocumentNumber,
-            document.Revision,
-            copy.CopyNumber,
-            sequence,
-            copy.IssuedToName,
-            DateTimeOffset.UtcNow);
+        var fieldDefinitions = await metadataFields.ResolveForTypeAsync(
+            source.DocumentTypeId, cancellationToken);
 
-        var scanCode = ScanCodeFor(document, copy);
+        var merge = DocxMetadataWriter.Write(
+            templateBytes,
+            MetadataResolver.Resolve(fieldDefinitions, BuildContext(revision, site, department, documentType, author)));
 
-        var rendered = await renderer.RenderAsync(documentContent, watermark, scanCode, cancellationToken);
+        if (merge.MissingTags.Count > 0)
+        {
+            return Error.Conflict(
+                "template_fields_missing",
+                $"The active template is missing content control(s): {string.Join(", ", merge.MissingTags)}.");
+        }
 
-        distributions.AddPrintEvent(new PrintEvent(copy.Id, document.Id, sequence, actor, watermark));
+        await documentFiles.SaveAsync(workingCopyKey, merge.Content, cancellationToken);
 
+        documents.Add(revision);
         audit.Record(
-            AuditAction.CopyPrinted, EntityType, copy.Id,
-            $"{document.DocumentNumber} copy {copy.CopyNumber}",
-            $"Print {sequence} of {copy.PrintLimit?.ToString() ?? "unlimited"} by {actor}."
-            + (rendered.IsWatermarked ? "" : " NOT WATERMARKED — renderer unavailable."));
+            AuditAction.DocumentRevisionStarted, EntityType, revision.Id,
+            $"{revision.DocumentNumber} Rev {revision.Revision:00}",
+            $"Revised from Rev {source.Revision:00}. Reason: {reason.Trim()}");
 
-        var outcome = await distributions.SaveChangesAsync(cancellationToken);
+        // Annexures are carried forward as fresh drafts of the new revision.
+        //
+        // Without this, revising an SOP would silently orphan its forms: the new revision would
+        // go effective carrying no annexures at all, while the previous revision's forms
+        // superseded along with it. An operator would be left following a current procedure
+        // with no record sheet to fill in — and nobody would see it happen, because nothing
+        // would have failed.
+        //
+        // Each carried annexure is a copy of its predecessor's CURRENT content, not a blank
+        // template: revising a procedure rarely means rewriting its forms from scratch, and
+        // starting from the existing form is what an author expects.
+        var sourceAnnexures = await documents.ListAnnexuresAsync(source.Id, cancellationToken);
+        var carriedKeys = new List<string>();
+
+        foreach (var sourceAnnexure in sourceAnnexures)
+        {
+            var annexureContent = await documentFiles.ReadAsync(
+                sourceAnnexure.ApprovedCopyKey ?? sourceAnnexure.WorkingCopyKey, cancellationToken);
+
+            if (annexureContent is null)
+            {
+                // Cleaning up what was already written: the blob store isn't transactional, so
+                // an early return here would otherwise leave orphaned files behind.
+                await documentFiles.DeleteAsync(workingCopyKey, CancellationToken.None);
+                foreach (var key in carriedKeys)
+                {
+                    await documentFiles.DeleteAsync(key, CancellationToken.None);
+                }
+
+                return Error.NotFound(
+                    "annexure_file_missing",
+                    $"The stored file for annexure {sourceAnnexure.DocumentNumber} is missing, "
+                    + "so the revision cannot carry it forward.");
+            }
+
+            var annexureKey = $"documents/{Uuid7.NewGuid():N}.docx";
+            carriedKeys.Add(annexureKey);
+
+            var carried = ControlledDocument.CreateAnnexure(
+                revision,
+                sourceAnnexure.AnnexureNumber ?? 1,
+                sourceAnnexure.Title,
+                sourceAnnexure.TemplateId,
+                annexureKey,
+                author);
+
+            await documentFiles.SaveAsync(annexureKey, annexureContent, cancellationToken);
+
+            documents.Add(carried);
+            audit.Record(
+                AuditAction.DocumentRevisionStarted, EntityType, carried.Id,
+                $"{carried.DocumentNumber} Rev {carried.Revision:00}",
+                $"Carried forward from {sourceAnnexure.DocumentNumber} with the parent's revision.");
+        }
+
+        var outcome = await documents.SaveChangesAsync(cancellationToken);
         if (!outcome.Saved)
         {
-            return Error.Conflict("copy_save_conflict", "The print could not be recorded.");
+            await documentFiles.DeleteAsync(workingCopyKey, CancellationToken.None);
+
+            return outcome.ViolatedIndexContains("family_revision")
+                ? Error.Conflict(
+                    "revision_already_open",
+                    "Another revision was started concurrently. Reload and retry.")
+                : Error.Conflict("document_save_conflict", "The revision could not be created.");
         }
 
-        return Result<PrintResult>.Success(new PrintResult(
-            rendered.Content,
-            rendered.ContentType,
-            rendered.IsWatermarked,
-            watermark,
-            scanCode,
-            sequence,
-            copy.PrintCount,
-            copy.PrintLimit));
+        return DocumentSummary.From(revision);
     }
 
-    public async Task<Result<IReadOnlyList<DistributionView>>> ListForDocumentAsync(
+    /// <summary>
+    /// Every revision of a document, oldest first — the version history an inspector asks for.
+    /// Accepts any revision's id and resolves the whole lineage from it.
+    /// </summary>
+    public async Task<Result<IReadOnlyList<DocumentSummary>>> ListRevisionsAsync(
         Guid documentId,
         CancellationToken cancellationToken)
     {
@@ -361,113 +233,49 @@ public sealed class DistributionService(
             return Error.NotFound("document_not_found", $"No document with id {documentId}.");
         }
 
-        var copies = await distributions.ListForDocumentAsync(documentId, cancellationToken);
-
-        return Result<IReadOnlyList<DistributionView>>.Success(
-            copies.Select(c => DistributionView.From(c, ScanCodeFor(document, c))).ToList());
+        var family = await documents.ListFamilyAsync(document.FamilyId, cancellationToken);
+        return Result<IReadOnlyList<DocumentSummary>>.Success(
+            family.Select(DocumentSummary.From).ToList());
     }
 
-    /// <summary>
-    /// The retrieval worklist: copies still in circulation for documents that are no longer
-    /// current. This is what someone works through after a supersession.
-    /// </summary>
-    public async Task<PagedResult<PendingRetrievalView>> ListPendingRetrievalAsync(
-        Guid? siteId,
-        PagedRequest paging,
-        CancellationToken cancellationToken)
-    {
-        var pending = await distributions.ListPendingRetrievalAsync(siteId, paging, cancellationToken);
-
-        return pending
-            .Map(x => new PendingRetrievalView(
-                x.Copy.Id,
-                x.Document.Id,
-                x.Document.DocumentNumber,
-                x.Document.Revision,
-                x.Document.Title,
-                x.Document.Status,
-                x.Copy.CopyNumber,
-                x.Copy.CopyType,
-                x.Copy.IssuedToName,
-                x.Copy.Status,
-                ScanCodeFor(x.Document, x.Copy),
-                x.Copy.CreatedAt));
-    }
-
-    public async Task<Result<PagedResult<PrintEventView>>> ListPrintHistoryAsync(
-        Guid documentId,
-        PagedRequest paging,
-        CancellationToken cancellationToken)
-    {
-        var copies = await distributions.ListForDocumentAsync(documentId, cancellationToken);
-        var byId = copies.ToDictionary(c => c.Id, c => c.CopyNumber);
-
-        var events = await distributions.ListPrintEventsAsync(documentId, paging, cancellationToken);
-
-        return Result<PagedResult<PrintEventView>>.Success(
-            events
-                .Map(e => new PrintEventView(
-                    e.Id,
-                    e.DistributionId,
-                    byId.GetValueOrDefault(e.DistributionId),
-                    e.PrintSequence,
-                    e.PrintedBy,
-                    e.Watermark,
-                    e.PrintedAt)));
-    }
-
-    private static string ScanCodeFor(ControlledDocument document, DocumentDistribution copy) =>
-        ControlledCopyWatermark.ComposeScanCode(document.DocumentNumber, document.Revision, copy.CopyNumber);
-
-    private async Task<Result<(DocumentDistribution Copy, ControlledDocument Document)>> LoadAsync(
-        Guid distributionId,
-        CancellationToken cancellationToken)
-    {
-        var copy = await distributions.GetAsync(distributionId, cancellationToken);
-        if (copy is null)
-        {
-            return Error.NotFound("copy_not_found", $"No distributed copy with id {distributionId}.");
-        }
-
-        var document = await documents.GetAsync(copy.DocumentId, cancellationToken);
-        if (document is null)
-        {
-            return Error.NotFound("document_not_found", "The document this copy belongs to no longer exists.");
-        }
-
-        return Result<(DocumentDistribution Copy, ControlledDocument Document)>.Success((copy, document));
-    }
-
-    private async Task<Error?> RequireIssuePermissionAsync(
+    private async Task<Result<(Site Site, Department Department, DocumentType Type)>> LoadContextAsync(
         ControlledDocument document,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(currentUser.UserName))
+        var site = await sites.GetAsync(document.SiteId, cancellationToken);
+        var department = await departments.GetAsync(document.DepartmentId, cancellationToken);
+        var documentType = await documentTypes.GetAsync(document.DocumentTypeId, cancellationToken);
+
+        if (site is null || department is null || documentType is null)
         {
-            return Error.Validation("actor_unknown", "The acting user could not be determined.");
+            return Error.NotFound(
+                "document_context_missing",
+                "The document's site, department or type no longer exists.");
         }
 
-        var allowed = await access.HasPermissionAsync(
-            Permission.DocumentIssue, document.SiteId, document.DepartmentId, cancellationToken);
-
-        return allowed
-            ? null
-            : Error.Validation(
-                "permission_denied",
-                $"{Permission.DocumentIssue} is required for this document's site and department.");
+        return Result<(Site Site, Department Department, DocumentType Type)>.Success(
+            (site, department, documentType));
     }
-}
 
-/// <param name="IsWatermarked">
-/// False when the renderer passed the file through unstamped. Surfaced so a caller never
-/// mistakes a plain file for a controlled copy.
-/// </param>
-public sealed record PrintResult(
-    byte[] Content,
-    string ContentType,
-    bool IsWatermarked,
-    string Watermark,
-    string ScanCode,
-    int PrintSequence,
-    int PrintCount,
-    int? PrintLimit);
+    private static MetadataContext BuildContext(
+        ControlledDocument document,
+        Site site,
+        Department department,
+        DocumentType documentType,
+        string author) =>
+        new(
+            document.DocumentNumber,
+            document.Title,
+            document.Revision,
+            document.EffectiveDate,
+            site.Code,
+            site.Name,
+            department.Code,
+            department.Name,
+            documentType.Code,
+            documentType.Name,
+            author,
+            author,
+            document.CreatedAt,
+            document.Status);
+}
