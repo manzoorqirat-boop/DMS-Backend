@@ -38,6 +38,191 @@ public sealed class DraftCreationService(
 {
     private const string EntityType = "ControlledDocument";
 
+    /// <summary>
+    /// Creates an annexure under a parent document.
+    /// <para>
+    /// <b>Draft parents only.</b> An annexure added to a document already in force would be new
+    /// controlled content entering force without having passed a signature route — and because
+    /// an annexure is never separately approvable, there is no route it could pass on its own.
+    /// Adding one to an effective SOP means revising the SOP.
+    /// </para>
+    /// <para>
+    /// The annexure gets its own template, chosen by document type: a cleaning-record form
+    /// looks nothing like the procedure it belongs to, so inheriting the parent's template
+    /// would produce a form with an SOP's structure.
+    /// </para>
+    /// </summary>
+    public async Task<Result<DocumentSummary>> CreateAnnexureAsync(
+        Guid parentDocumentId,
+        CreateAnnexureRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserName is not { } author || string.IsNullOrWhiteSpace(author))
+        {
+            return Error.Validation("actor_unknown", "The acting user could not be determined.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Title))
+        {
+            return Error.Validation("document_title_required", "An annexure title is required.");
+        }
+
+        var parent = await documents.GetAsync(parentDocumentId, cancellationToken);
+        if (parent is null)
+        {
+            return Error.NotFound("document_not_found", $"No document with id {parentDocumentId}.");
+        }
+
+        if (parent.IsAnnexure)
+        {
+            return Error.Validation(
+                "annexure_nesting",
+                $"{parent.DocumentNumber} is itself an annexure. Annexures cannot be nested.");
+        }
+
+        if (parent.Status != DocumentStatus.Draft)
+        {
+            return Error.Conflict(
+                "parent_not_draft",
+                $"Annexures can only be added while the parent is a Draft. {parent.DocumentNumber} "
+                + $"is {parent.Status} — revise it to add an annexure, so the new content passes "
+                + "a signature route.");
+        }
+
+        var permitted = await access.HasPermissionAsync(
+            Permission.DocumentCreate, parent.SiteId, parent.DepartmentId, cancellationToken);
+
+        if (!permitted)
+        {
+            return Error.Validation(
+                "permission_denied",
+                $"{Permission.DocumentCreate} is required for this site and department.");
+        }
+
+        var documentType = await documentTypes.GetAsync(request.DocumentTypeId, cancellationToken);
+        if (documentType is null || !documentType.IsActive)
+        {
+            return Error.NotFound(
+                "document_type_not_found", "The chosen document type does not exist or is inactive.");
+        }
+
+        var template = await templates.GetActiveAsync(documentType.Id, cancellationToken);
+        if (template is null)
+        {
+            return Error.Conflict(
+                "no_active_template",
+                $"'{documentType.Code}' has no active template to create an annexure from.");
+        }
+
+        var templateBytes = await templateFiles.ReadAsync(template.StorageKey, cancellationToken);
+        if (templateBytes is null)
+        {
+            return Error.NotFound(
+                "template_file_missing",
+                $"The stored file for the active template of '{documentType.Code}' is missing.");
+        }
+
+        var site = await sites.GetAsync(parent.SiteId, cancellationToken);
+        var department = await departments.GetAsync(parent.DepartmentId, cancellationToken);
+        if (site is null || department is null)
+        {
+            return Error.Conflict(
+                "master_data_unresolved",
+                "The parent document's site or department could not be resolved.");
+        }
+
+        var existing = await documents.ListAnnexuresAsync(parent.Id, cancellationToken);
+
+        // Highest-plus-one rather than count-plus-one: an annexure that was withdrawn leaves a
+        // gap, and reusing its number would put two documents in the register that had once
+        // carried the same identity.
+        var nextNumber = existing.Count == 0
+            ? 1
+            : existing.Max(a => a.AnnexureNumber ?? 0) + 1;
+
+        var fieldDefinitions = await metadataFields.ResolveForTypeAsync(documentType.Id, cancellationToken);
+        var workingCopyKey = $"documents/{Uuid7.NewGuid():N}.docx";
+
+        try
+        {
+            // No sequence allocation: the number is derived from the parent's, so there is no
+            // shared counter to contend over and no transaction needed to protect one.
+            var annexure = ControlledDocument.CreateAnnexure(
+                parent, nextNumber, request.Title, template.Id, workingCopyKey, author);
+
+            var merge = DocxMetadataWriter.Write(
+                templateBytes,
+                MetadataResolver.Resolve(
+                    fieldDefinitions,
+                    BuildContext(annexure, site, department, documentType, author)));
+
+            if (merge.MissingTags.Count > 0)
+            {
+                throw new DraftAbortedException(Error.Conflict(
+                    "template_fields_missing",
+                    $"The active template is missing content control(s): {string.Join(", ", merge.MissingTags)}. "
+                    + "Re-register and re-validate the template."));
+            }
+
+            await documentFiles.SaveAsync(workingCopyKey, merge.Content, cancellationToken);
+
+            documents.Add(annexure);
+            audit.Record(
+                AuditAction.DocumentCreated, EntityType, annexure.Id, annexure.DocumentNumber,
+                $"Annexure {nextNumber} of {parent.DocumentNumber}; title '{annexure.Title}'; "
+                + $"type {documentType.Code}; template {template.Name} v{template.TemplateVersion}.");
+
+            var outcome = await documents.SaveChangesAsync(cancellationToken);
+
+            if (!outcome.Saved)
+            {
+                throw new DraftAbortedException(Error.Conflict(
+                    "annexure_save_conflict",
+                    "The annexure could not be created because of a conflicting concurrent change. "
+                    + "Another annexure may have been added at the same moment."));
+            }
+
+            return DocumentSummary.From(annexure);
+        }
+        catch (DraftAbortedException ex)
+        {
+            await documentFiles.DeleteAsync(workingCopyKey, CancellationToken.None);
+            return ex.Error;
+        }
+        catch
+        {
+            await documentFiles.DeleteAsync(workingCopyKey, CancellationToken.None);
+            throw;
+        }
+    }
+
+    /// <summary>A document's annexures, in order.</summary>
+    public async Task<Result<IReadOnlyList<DocumentSummary>>> ListAnnexuresAsync(
+        Guid parentDocumentId,
+        CancellationToken cancellationToken)
+    {
+        var parent = await documents.GetAsync(parentDocumentId, cancellationToken);
+        if (parent is null)
+        {
+            return Error.NotFound("document_not_found", $"No document with id {parentDocumentId}.");
+        }
+
+        var permitted = await access.HasPermissionAsync(
+            Permission.DocumentView, parent.SiteId, parent.DepartmentId, cancellationToken);
+
+        if (!permitted)
+        {
+            return Error.Validation(
+                "permission_denied",
+                $"{Permission.DocumentView} is required for this document's site and department.");
+        }
+
+        var annexures = await documents.ListAnnexuresAsync(parent.Id, cancellationToken);
+
+        return Result<IReadOnlyList<DocumentSummary>>.Success(
+            annexures.Select(DocumentSummary.From).ToList());
+    }
+
     public async Task<Result<DocumentSummary>> CreateDraftAsync(
         CreateDraftRequest request,
         CancellationToken cancellationToken)
