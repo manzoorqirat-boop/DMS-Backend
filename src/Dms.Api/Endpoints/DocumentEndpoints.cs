@@ -61,13 +61,15 @@ public static class DocumentEndpoints
             Guid? departmentId,
             Guid? documentTypeId,
             bool? currentRevisionsOnly,
+            bool? includeAnnexures,
             string? search,
             DocumentStatus? status,
             int? page,
             int? pageSize,
             CancellationToken ct) =>
             Results.Ok(await service.ListAsync(
-                siteId, departmentId, documentTypeId, currentRevisionsOnly ?? true, search, status,
+                siteId, departmentId, documentTypeId, currentRevisionsOnly ?? true,
+                includeAnnexures ?? false, search, status,
                 new PagedRequest(page, pageSize), ct)));
 
         group.MapGet("/{id:guid}/revisions", async (
