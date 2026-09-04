@@ -367,3 +367,81 @@ public sealed class PasswordPolicyRepository(DmsDbContext db) : IPasswordPolicyR
     public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
         SaveChangesTranslator.SaveAsync(db, cancellationToken);
 }
+
+/// <summary>The single status-stamp row, seeded with the defaults on first read.</summary>
+public sealed class DocumentStatusStampsRepository(DmsDbContext db) : IDocumentStatusStampsRepository
+{
+    public async Task<DocumentStatusStamps> GetAsync(CancellationToken cancellationToken)
+    {
+        // Ordered by Id, which is UUIDv7 and therefore sorts in creation order.
+        var existing = await db.DocumentStatusStamps
+            .OrderBy(x => x.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var seeded = DocumentStatusStamps.CreateDefault("system");
+        db.DocumentStatusStamps.Add(seeded);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return seeded;
+    }
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
+
+/// <summary>The single signature-policy row, seeded with the defaults on first read.</summary>
+public sealed class SignaturePolicyRepository(DmsDbContext db) : ISignaturePolicyRepository
+{
+    public async Task<SignaturePolicy> GetAsync(CancellationToken cancellationToken)
+    {
+        var existing = await db.SignaturePolicies
+            .OrderBy(x => x.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var seeded = SignaturePolicy.CreateDefault("system");
+        db.SignaturePolicies.Add(seeded);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return seeded;
+    }
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
+
+public sealed class PendingActionRepository(DmsDbContext db) : IPendingActionRepository
+{
+    public Task<PendingAction?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+        db.PendingActions.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<PendingAction>> ListAwaitingAsync(CancellationToken cancellationToken) =>
+        await db.PendingActions
+            .Where(x => x.Status == PendingActionStatus.AwaitingCountersignature)
+            .OrderBy(x => x.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+    public Task<bool> HasAwaitingAsync(
+        string subjectType,
+        Guid subjectId,
+        CancellationToken cancellationToken) =>
+        db.PendingActions.AnyAsync(
+            x => x.SubjectType == subjectType
+                 && x.SubjectId == subjectId
+                 && x.Status == PendingActionStatus.AwaitingCountersignature,
+            cancellationToken);
+
+    public void Add(PendingAction action) => db.PendingActions.Add(action);
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
