@@ -49,4 +49,10 @@ public sealed record DispositionDueView(
     int DaysOverdue,
     string? ObsoleteReason);
 
-public sealed record RecordDispositionRequest(DispositionAction Action, string Note);
+/// <param name="Password">
+/// Required: RecordDisposition cannot have its signature configured away, and it defaults to
+/// needing authorisation before it takes effect. A record destroyed before approval cannot be
+/// restored when approval is refused.
+/// </param>
+public sealed record RecordDispositionRequest(
+    DispositionAction Action, string Note, string? Password = null);
