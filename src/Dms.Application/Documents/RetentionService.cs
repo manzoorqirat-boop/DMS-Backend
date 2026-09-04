@@ -1,5 +1,6 @@
 using Dms.Application.Abstractions;
 using Dms.Application.Common;
+using Dms.Application.Signing;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 
@@ -17,6 +18,7 @@ namespace Dms.Application.Documents;
 /// </summary>
 public sealed class RetentionService(
     IControlledDocumentRepository documents,
+    ActionSignatureService actionSignatures,
     IRetentionPolicyRepository policies,
     IDocumentTypeRepository documentTypes,
     IDocumentFileStore documentFiles,
@@ -93,6 +95,7 @@ public sealed class RetentionService(
         Guid documentId,
         DispositionAction action,
         string note,
+        string? password,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(currentUser.UserName))
@@ -136,6 +139,36 @@ public sealed class RetentionService(
                 "retention_not_expired",
                 $"{document.DocumentNumber} is retained until {until:yyyy-MM-dd}; "
                 + $"{until.DayNumber - clock.Today.DayNumber} day(s) remain.");
+        }
+
+        // Signature point, and the strictest one. RecordDisposition cannot have its signature
+        // configured away, and defaults to requiring authorisation BEFORE it takes effect —
+        // destroying a record and then discovering the approver would have refused is not a
+        // recoverable situation.
+        var required = await actionSignatures.RequireAsync(
+            ControlledAction.RecordDisposition,
+            EntityType,
+            document.Id,
+            $"{document.DocumentNumber} Rev {document.Revision:00}",
+            document.SiteId,
+            document.DepartmentId,
+            password,
+            new { Action = action, Note = note },
+            cancellationToken);
+
+        if (!required.IsSuccess)
+        {
+            return required.Error!;
+        }
+
+        if (required.Value.Outcome == ActionSignatureService.Outcome.Queued)
+        {
+            await documents.SaveChangesAsync(cancellationToken);
+
+            return Error.Conflict(
+                "awaiting_countersignature",
+                $"The disposition of {document.DocumentNumber} is recorded and awaiting "
+                + "authorisation. Nothing has been destroyed or retained yet.");
         }
 
         try
