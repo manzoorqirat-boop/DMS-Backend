@@ -44,7 +44,12 @@ public sealed record DistributionView(
         copy.CreatedAt);
 }
 
-public sealed record CloseOutRequest(DistributionStatus Outcome, string Note);
+/// <param name="Password">
+/// The performer's signing credential. Required because CloseOutCopy is one of the two actions
+/// whose signature requirement cannot be configured away — writing off a controlled copy as
+/// lost is a finding, and must be attributable to more than a logged-in session.
+/// </param>
+public sealed record CloseOutRequest(DistributionStatus Outcome, string Note, string? Password = null);
 
 /// <summary>A row in the retrieval worklist: a copy still out for a document no longer current.</summary>
 public sealed record PendingRetrievalView(
