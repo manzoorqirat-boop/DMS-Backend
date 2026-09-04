@@ -61,6 +61,9 @@ public static class DependencyInjection
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IPasswordPolicyRepository, PasswordPolicyRepository>();
+        services.AddScoped<IDocumentStatusStampsRepository, DocumentStatusStampsRepository>();
+        services.AddScoped<ISignaturePolicyRepository, SignaturePolicyRepository>();
+        services.AddScoped<IPendingActionRepository, PendingActionRepository>();
         services.AddScoped<ISignatureRepository, SignatureRepository>();
         services.AddScoped<IRoleRepository, RoleRepository>();
         services.AddScoped<INumberingRuleRepository, NumberingRuleRepository>();
@@ -140,6 +143,7 @@ public static class DependencyInjection
         services.AddScoped<UserService>();
         services.AddScoped<RoleService>();
         services.AddScoped<PasswordPolicyService>();
+        services.AddScoped<ActionSignatureService>();
         services.AddScoped<NumberingRuleService>();
         services.AddScoped<WorkflowDefinitionService>();
         services.AddScoped<MetadataFieldService>();
