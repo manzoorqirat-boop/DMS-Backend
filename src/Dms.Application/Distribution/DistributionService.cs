@@ -92,6 +92,33 @@ public sealed class DistributionService(
                 + $"{CopyType.Uncontrolled} copy may be unlimited.");
         }
 
+        // Signature point. Issuing puts paper into circulation, so it is signed by default —
+        // though not countersigned, since a copy issued in error can be retrieved.
+        var required = await actionSignatures.RequireAsync(
+            ControlledAction.IssueCopy,
+            EntityType,
+            document.Id,
+            $"{document.DocumentNumber} Rev {document.Revision:00}",
+            document.SiteId,
+            document.DepartmentId,
+            request.Password,
+            request,
+            cancellationToken);
+
+        if (!required.IsSuccess)
+        {
+            return required.Error!;
+        }
+
+        if (required.Value.Outcome == ActionSignatureService.Outcome.Queued)
+        {
+            await distributions.SaveChangesAsync(cancellationToken);
+
+            return Error.Conflict(
+                "awaiting_countersignature",
+                "This issue is recorded and awaiting countersignature. No copy has been issued yet.");
+        }
+
         var highest = await distributions.GetHighestCopyNumberAsync(documentId, cancellationToken);
 
         DocumentDistribution copy;
