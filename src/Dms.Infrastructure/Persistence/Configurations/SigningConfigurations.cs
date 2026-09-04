@@ -145,3 +145,108 @@ public class PasswordPolicyConfiguration : IEntityTypeConfiguration<PasswordPoli
         builder.Property(x => x.UpdatedBy).HasMaxLength(128).IsRequired();
     }
 }
+
+
+/// <summary>
+/// One row, holding all seven status stamps as JSON. A table with a row per status would need
+/// a schema migration to buy nothing — the set is fixed by the DocumentStatus enum, so it can
+/// never grow an eighth member at runtime.
+/// </summary>
+public class DocumentStatusStampsConfiguration : IEntityTypeConfiguration<DocumentStatusStamps>
+{
+    public void Configure(EntityTypeBuilder<DocumentStatusStamps> builder)
+    {
+        builder.ToTable("document_status_stamps");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).ValueGeneratedNever();
+
+        builder.Property(x => x.StampsJson).HasColumnType("jsonb").IsRequired();
+        builder.Property(x => x.UpdatedBy).HasMaxLength(128).IsRequired();
+
+        // Stamps is computed from StampsJson and has no setter EF could use.
+        builder.Ignore(x => x.Stamps);
+    }
+}
+
+/// <summary>One row holding every signature point as JSON — see SignaturePolicy.</summary>
+public class SignaturePolicyConfiguration : IEntityTypeConfiguration<SignaturePolicy>
+{
+    public void Configure(EntityTypeBuilder<SignaturePolicy> builder)
+    {
+        builder.ToTable("signature_policies");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).ValueGeneratedNever();
+
+        builder.Property(x => x.PointsJson).HasColumnType("jsonb").IsRequired();
+        builder.Property(x => x.UpdatedBy).HasMaxLength(128).IsRequired();
+
+        // Computed from PointsJson; no setter for EF to use.
+        builder.Ignore(x => x.Points);
+    }
+}
+
+public class PendingActionConfiguration : IEntityTypeConfiguration<PendingAction>
+{
+    public void Configure(EntityTypeBuilder<PendingAction> builder)
+    {
+        builder.ToTable("pending_actions");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).ValueGeneratedNever();
+
+        builder.Property(x => x.Action).HasConversion<string>().HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Timing).HasConversion<string>().HasMaxLength(32).IsRequired();
+        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
+        builder.Property(x => x.CountersignerPermission).HasConversion<string>().HasMaxLength(64);
+
+        builder.Property(x => x.SubjectType).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.SubjectLabel).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.PayloadJson).HasColumnType("jsonb").IsRequired();
+        builder.Property(x => x.RejectionReason).HasMaxLength(1024);
+
+        // The countersignature worklist's own query: everything still awaiting someone, oldest
+        // first. Indexed because it is read on every page load of that screen.
+        builder.HasIndex(x => new { x.Status, x.CreatedAt })
+            .HasDatabaseName("ix_pending_actions_status_created");
+
+        builder.HasIndex(x => new { x.SubjectType, x.SubjectId })
+            .HasDatabaseName("ix_pending_actions_subject");
+
+        // Signatures are owned by the action and loaded with it — a pending action without its
+        // signatures cannot answer who has already signed, which is the first thing every
+        // caller needs.
+        builder.HasMany(x => x.Signatures)
+            .WithOne()
+            .HasForeignKey(x => x.PendingActionId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Signatures is an expression-bodied IReadOnlyList over a private list, so EF has to be
+        // told to write through the field rather than looking for a setter it will not find.
+        builder.Navigation(x => x.Signatures)
+            .HasField("_signatures")
+            .UsePropertyAccessMode(PropertyAccessMode.Field)
+            .AutoInclude();
+    }
+}
+
+/// <summary>
+/// Append-only, like ElectronicSignature. The trigger that enforces this in the database lives
+/// in AuditImmutability.sql — a signature that could be edited afterwards would not be one.
+/// </summary>
+public class ActionSignatureConfiguration : IEntityTypeConfiguration<ActionSignature>
+{
+    public void Configure(EntityTypeBuilder<ActionSignature> builder)
+    {
+        builder.ToTable("action_signatures");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).ValueGeneratedNever();
+
+        builder.Property(x => x.Meaning).HasConversion<string>().HasMaxLength(32).IsRequired();
+        builder.Property(x => x.UserName).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.FullName).HasMaxLength(256).IsRequired();
+        builder.Property(x => x.Department).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.Designation).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.Reason).HasMaxLength(1024);
+
+        builder.Ignore(x => x.UpdatedAt);
+    }
+}
