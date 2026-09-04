@@ -102,6 +102,18 @@ public interface IControlledDocumentRepository
 
     void Add(ControlledDocument document);
 
+    /// <summary>
+    /// A document's annexures, in annexure-number order.
+    /// <para>
+    /// Ordered rather than returned arbitrarily because the order is meaningful — it is the
+    /// order they print in, and the order an operator expects to find them behind the
+    /// procedure.
+    /// </para>
+    /// </summary>
+    Task<IReadOnlyList<ControlledDocument>> ListAnnexuresAsync(
+        Guid parentDocumentId,
+        CancellationToken cancellationToken);
+
     Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken);
 
     /// <summary>
