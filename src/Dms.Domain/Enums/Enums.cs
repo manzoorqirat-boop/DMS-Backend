@@ -138,6 +138,13 @@ public enum AuditAction
     /// </summary>
     PasswordPolicyChanged,
 
+    /// <summary>
+    /// Which actions require an electronic signature was changed. Its own action rather than a
+    /// reused policy event: an inspector looking for "who removed the countersignature from
+    /// copy write-offs" should find it under that question, not filed with password rules.
+    /// </summary>
+    SignaturePolicyChanged,
+
     // Configuration. A numbering pattern change alters every number issued afterwards, so it
     // belongs in the trail alongside the documents it will shape.
     NumberingRuleCreated,
