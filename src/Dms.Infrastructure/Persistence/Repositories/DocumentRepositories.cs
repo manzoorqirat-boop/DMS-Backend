@@ -73,12 +73,21 @@ public sealed class ControlledDocumentRepository(DmsDbContext db) : IControlledD
         Guid? departmentId,
         Guid? documentTypeId,
         bool currentRevisionsOnly,
+        bool includeAnnexures,
         string? search,
         DocumentStatus? status,
         PagedRequest paging,
         CancellationToken cancellationToken)
     {
         var query = db.ControlledDocuments.AsQueryable();
+
+        // Annexures are hidden by default. The register is a list of procedures, and showing
+        // every form alongside them would roughly double its length with rows that only make
+        // sense next to their parent — which is where the detail page already lists them.
+        if (!includeAnnexures)
+        {
+            query = query.Where(x => x.ParentDocumentId == null);
+        }
 
         // Filtered server-side rather than in the caller, which is the whole point: counting
         // statuses in a fetched page would be wrong the moment the register outgrows one page,
