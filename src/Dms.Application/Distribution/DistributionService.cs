@@ -1,5 +1,6 @@
 using Dms.Application.Abstractions;
 using Dms.Application.Common;
+using Dms.Application.Signing;
 using Dms.Domain.Entities;
 using Dms.Domain.Enums;
 using Dms.Domain.Services;
@@ -16,6 +17,7 @@ namespace Dms.Application.Distribution;
 /// </summary>
 public sealed class DistributionService(
     IDistributionRepository distributions,
+    ActionSignatureService actionSignatures,
     IControlledDocumentRepository documents,
     IDepartmentRepository departments,
     IDocumentFileStore documentFiles,
@@ -264,6 +266,39 @@ public sealed class DistributionService(
             return gate;
         }
 
+        // Signature point. CloseOutCopy defaults to requiring both a signature and a
+        // countersignature, and the signature half cannot be configured off.
+        var required = await actionSignatures.RequireAsync(
+            ControlledAction.CloseOutCopy,
+            EntityType,
+            copy.Id,
+            $"{document.DocumentNumber} copy {copy.CopyNumber}",
+            document.SiteId,
+            document.DepartmentId,
+            request.Password,
+            request,
+            cancellationToken);
+
+        if (!required.IsSuccess)
+        {
+            return required.Error!;
+        }
+
+        // Queued means authorisation must come first, so the close-out does NOT happen now.
+        // Returning success here without applying it would be wrong in the other direction —
+        // the caller needs to know the copy is still outstanding pending approval.
+        if (required.Value.Outcome == ActionSignatureService.Outcome.Queued)
+        {
+            var queued = await distributions.SaveChangesAsync(cancellationToken);
+
+            return queued.Saved
+                ? Error.Conflict(
+                    "awaiting_countersignature",
+                    $"The close-out of copy {copy.CopyNumber} is recorded and awaiting "
+                    + "countersignature. It has not yet taken effect.")
+                : Error.Conflict("copy_save_conflict", "The close-out could not be recorded.");
+        }
+
         try
         {
             copy.CloseOut(request.Outcome, request.Note, currentUser.UserName!);
@@ -276,7 +311,10 @@ public sealed class DistributionService(
         audit.Record(
             AuditAction.CopyClosedOut, EntityType, copy.Id,
             $"{document.DocumentNumber} copy {copy.CopyNumber}",
-            $"Recorded as {request.Outcome}. {request.Note.Trim()}");
+            $"Recorded as {request.Outcome}. {request.Note.Trim()}"
+            + (required.Value.Outcome == ActionSignatureService.Outcome.ProceedPendingVerification
+                ? " Awaiting second-person verification."
+                : ""));
 
         var outcome = await distributions.SaveChangesAsync(cancellationToken);
         return outcome.Saved
