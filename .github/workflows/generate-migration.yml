@@ -51,6 +51,12 @@ jobs:
       - name: Restore
         run: dotnet restore
 
+      - name: Build
+        # Built explicitly before `dotnet ef`, which also builds but hides the compiler output
+        # behind "Build failed. Use dotnet build to see the errors." — leaving you with a failed
+        # workflow and no idea why. Failing here instead shows the actual errors.
+        run: dotnet build --no-restore --configuration Release
+
       - name: Generate the migration
         # No DATABASE_URL is set, deliberately. `migrations add` only reads the compiled model
         # and never opens a connection; DesignTimeDbContextFactory falls back to a placeholder
@@ -60,7 +66,9 @@ jobs:
           dotnet ef migrations add "${{ inputs.name }}" \
             --project src/Dms.Infrastructure \
             --startup-project src/Dms.Api \
-            --output-dir Persistence/Migrations
+            --output-dir Persistence/Migrations \
+            --no-build \
+            --configuration Release
 
       - name: Add the audit-immutability triggers to the migration
         # The append-only triggers on the audit and signature tables live in raw SQL, because
@@ -121,9 +129,10 @@ jobs:
           grep -c "CreateTable" src/Dms.Infrastructure/Persistence/Migrations/*_${{ inputs.name }}.cs \
             || echo "no CreateTable calls — expected for a migration that only alters"
 
-      - name: Verify it still builds
-        # A migration that does not compile is worse than none: it breaks every subsequent
-        # deploy, and the failure appears far from its cause.
+      - name: Verify the generated migration compiles
+        # The build above proved the project compiled BEFORE the migration was written. This
+        # proves it still does after — which is the real risk, since the trigger-patching step
+        # edits generated C# with string manipulation.
         run: dotnet build --no-restore --configuration Release
 
       - name: Commit
