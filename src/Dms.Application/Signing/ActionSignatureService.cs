@@ -21,6 +21,7 @@ public sealed class ActionSignatureService(
     ISignaturePolicyRepository policies,
     IPendingActionRepository pendingActions,
     IUserRepository users,
+    ISigningPolicy signingPolicy,
     IAccessControl access,
     IAuditTrail audit,
     ICurrentUser currentUser,
@@ -109,7 +110,11 @@ public sealed class ActionSignatureService(
 
         if (!user.VerifyPassword(password))
         {
-            user.RegisterFailedSigningAttempt(now);
+            // Same threshold and lockout the document-approval path uses — a failed action
+            // signature and a failed approval signature are the same kind of event, and two
+            // different lockout policies would be an odd thing to explain to an auditor.
+            user.RegisterFailedSigningAttempt(
+                signingPolicy.MaxFailedSigningAttempts, signingPolicy.LockoutDuration, now);
             await users.SaveChangesAsync(cancellationToken);
 
             audit.Record(
@@ -241,7 +246,11 @@ public sealed class ActionSignatureService(
 
         if (!user.VerifyPassword(password))
         {
-            user.RegisterFailedSigningAttempt(now);
+            // Same threshold and lockout the document-approval path uses — a failed action
+            // signature and a failed approval signature are the same kind of event, and two
+            // different lockout policies would be an odd thing to explain to an auditor.
+            user.RegisterFailedSigningAttempt(
+                signingPolicy.MaxFailedSigningAttempts, signingPolicy.LockoutDuration, now);
             await users.SaveChangesAsync(cancellationToken);
 
             audit.Record(
