@@ -89,6 +89,8 @@ public class ControlledDocumentConfiguration : IEntityTypeConfiguration<Controll
             .HasForeignKey(x => x.ParentDocumentId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        builder.Property(x => x.Scope).HasConversion<string>().HasMaxLength(16).IsRequired();
+
         builder.HasIndex(x => new { x.ParentDocumentId, x.AnnexureNumber })
             .HasDatabaseName("ix_controlled_documents_parent_annexure");
 
@@ -151,5 +153,47 @@ public class ControlledDocumentConfiguration : IEntityTypeConfiguration<Controll
 
         builder.HasIndex(x => new { x.DepartmentId, x.Status })
             .HasDatabaseName("ix_controlled_documents_department_status");
+    }
+}
+
+
+/// <summary>
+/// A site's adoption of a global document. No content, only the fact of acceptance — see
+/// DocumentAdoption.
+/// </summary>
+public class DocumentAdoptionConfiguration : IEntityTypeConfiguration<DocumentAdoption>
+{
+    public void Configure(EntityTypeBuilder<DocumentAdoption> builder)
+    {
+        builder.ToTable("document_adoptions");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).ValueGeneratedNever();
+
+        builder.Property(x => x.AdoptedBy).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.WithdrawnBy).HasMaxLength(128);
+        builder.Property(x => x.Note).HasMaxLength(1024);
+        builder.Property(x => x.WithdrawalReason).HasMaxLength(1024);
+
+        builder.HasOne<ControlledDocument>()
+            .WithMany()
+            .HasForeignKey(x => x.DocumentId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Site>()
+            .WithMany()
+            .HasForeignKey(x => x.SiteId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // One ACTIVE adoption per document per site. A filtered index rather than a plain
+        // unique one, because a site that withdraws and later re-adopts the same revision is
+        // legitimate — what must never exist is two live adoptions saying different things
+        // about the same document at the same site.
+        builder.HasIndex(x => new { x.DocumentId, x.SiteId })
+            .IsUnique()
+            .HasFilter("is_active = true")
+            .HasDatabaseName("ux_document_adoptions_active");
+
+        builder.HasIndex(x => new { x.SiteId, x.IsActive })
+            .HasDatabaseName("ix_document_adoptions_site");
     }
 }

@@ -37,6 +37,28 @@ public enum TemplateStatus
 /// once the real envelope callbacks exist.
 /// </para>
 /// </summary>
+/// <summary>
+/// Whether a document belongs to one site or is issued centrally for others to adopt.
+/// <para>
+/// Deliberately expressed as a scope on a document that still has an owning site, rather than
+/// by making SiteId nullable. A global SOP is authored, revised and owned somewhere — usually
+/// corporate QA — and that ownership is what decides who may revise it. Nullable SiteId would
+/// have made "who owns this" unanswerable, and would have rippled through numbering, access
+/// control and distribution, all of which assume a document has a site.
+/// </para>
+/// </summary>
+public enum DocumentScope
+{
+    /// <summary>Applies only at its own site. The default, and most documents.</summary>
+    Local,
+
+    /// <summary>
+    /// Issued centrally for other sites to adopt. It is in force at its owning site as usual;
+    /// elsewhere it applies only where a site has formally adopted it.
+    /// </summary>
+    Global,
+}
+
 public enum DocumentStatus
 {
     /// <summary>Created from a template, being authored. The only editable state.</summary>

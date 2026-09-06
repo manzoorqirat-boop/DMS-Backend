@@ -102,6 +102,11 @@ public class ControlledDocument : Entity, ITimestamped
             AnnexureNumber = annexureNumber,
             Revision = parent.Revision,
             Status = parent.Status,
+
+            // Annexures inherit scope: adopting a global SOP adopts its forms with it. A local
+            // annexure on a global parent would mean a site following the procedure with no
+            // record sheet, which is the mismatch annexures exist to prevent.
+            Scope = parent.Scope,
         };
     }
 
@@ -110,7 +115,22 @@ public class ControlledDocument : Entity, ITimestamped
 
     public string Title { get; private set; } = "";
 
+    /// <summary>
+    /// The site that <b>owns</b> this document — authors it, revises it, and is the only site
+    /// permitted to change it. For a Local document that is also the only site it applies to;
+    /// for a Global one, other sites may adopt it but never edit it.
+    /// </summary>
     public Guid SiteId { get; private set; }
+
+    /// <summary>
+    /// Whether other sites may adopt this document. See <see cref="DocumentScope"/>.
+    /// <para>
+    /// Set by the owning site and only while the document is a Draft: turning a document
+    /// global after other sites could already have been affected would change what it means
+    /// retrospectively.
+    /// </para>
+    /// </summary>
+    public DocumentScope Scope { get; private set; } = DocumentScope.Local;
     public Guid DepartmentId { get; private set; }
     public Guid DocumentTypeId { get; private set; }
 
@@ -469,6 +489,12 @@ public class ControlledDocument : Entity, ITimestamped
             Revision = Revision + 1,
             FamilyId = FamilyId,
             IsCurrentRevision = false,
+
+            // Scope is inherited, not reset. Rev 02 of a global SOP is still global — losing
+            // that would quietly turn a corporate document into a local one at its next
+            // revision, and every adopting site would find it had vanished from their register
+            // with nothing to explain why.
+            Scope = Scope,
         };
     }
 
@@ -545,6 +571,47 @@ public class ControlledDocument : Entity, ITimestamped
     }
 
     private void Touch() => UpdatedAt = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// Marks the document as issued centrally for other sites to adopt.
+    /// <para>
+    /// Draft only. A document that has been through review was approved as what it was; making
+    /// it global afterwards would extend its reach to sites whose reviewers never saw it.
+    /// </para>
+    /// <para>
+    /// Annexures follow their parent's scope implicitly — adopting an SOP adopts its forms —
+    /// so setting scope on one directly is refused.
+    /// </para>
+    /// </summary>
+    public void SetScope(DocumentScope scope)
+    {
+        RefuseIfAnnexure(nameof(SetScope));
+
+        if (Status != DocumentStatus.Draft)
+        {
+            throw new InvalidOperationException(
+                $"{DocumentNumber} is {Status}. A document's scope can only be set while it is a "
+                + "Draft — it was reviewed and approved as what it was at the time.");
+        }
+
+        Scope = scope;
+        Touch();
+    }
+
+    /// <summary>
+    /// Whether a given site may adopt this document.
+    /// <para>
+    /// The owning site is excluded deliberately: the document is already in force there through
+    /// its own lifecycle, and an adoption record would imply it needed to accept its own
+    /// document. Only an Effective document can be adopted — adopting a draft would let a site
+    /// commit to text that has not been approved anywhere.
+    /// </para>
+    /// </summary>
+    public bool CanBeAdoptedBy(Guid siteId) =>
+        Scope == DocumentScope.Global
+        && Status == DocumentStatus.Effective
+        && IsCurrentRevision
+        && siteId != SiteId;
 
     /// <summary>
     /// Refuses a lifecycle operation attempted directly on an annexure.
