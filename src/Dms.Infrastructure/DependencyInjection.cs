@@ -64,6 +64,8 @@ public static class DependencyInjection
         services.AddScoped<IDocumentStatusStampsRepository, DocumentStatusStampsRepository>();
         services.AddScoped<ISignaturePolicyRepository, SignaturePolicyRepository>();
         services.AddScoped<IPendingActionRepository, PendingActionRepository>();
+        services.AddScoped<IDocumentAdoptionRepository, DocumentAdoptionRepository>();
+        services.AddScoped<IReviewCommentRepository, ReviewCommentRepository>();
         services.AddScoped<ISignatureRepository, SignatureRepository>();
         services.AddScoped<IRoleRepository, RoleRepository>();
         services.AddScoped<INumberingRuleRepository, NumberingRuleRepository>();
@@ -151,6 +153,8 @@ public static class DependencyInjection
         services.AddScoped<DocumentLifecycleService>();
         services.AddScoped<RetentionService>();
         services.AddScoped<ApprovedPdfService>();
+        services.AddScoped<AdoptionService>();
+        services.AddScoped<DraftReviewService>();
 
         // The whole in-browser editing stack registers together or not at all. EditingService
         // depends on IEditorTokenService and IEditorContentFetcher, so registering it outside

@@ -381,3 +381,86 @@ public sealed class DistributionRepository(DmsDbContext db) : IDistributionRepos
     public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
         SaveChangesTranslator.SaveAsync(db, cancellationToken);
 }
+
+public sealed class DocumentAdoptionRepository(DmsDbContext db) : IDocumentAdoptionRepository
+{
+    public Task<DocumentAdoption?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+        db.DocumentAdoptions.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<DocumentAdoption>> ListForDocumentAsync(
+        Guid documentId,
+        CancellationToken cancellationToken) =>
+        await db.DocumentAdoptions
+            .Where(x => x.DocumentId == documentId)
+            .OrderBy(x => x.AdoptedAt)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<DocumentAdoption>> ListActiveForSiteAsync(
+        Guid siteId,
+        CancellationToken cancellationToken) =>
+        await db.DocumentAdoptions
+            .Where(x => x.SiteId == siteId && x.IsActive)
+            .OrderBy(x => x.EffectiveDate)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<ControlledDocument>> ListAdoptableForSiteAsync(
+        Guid siteId,
+        CancellationToken cancellationToken)
+    {
+        // Annexures are excluded because they follow their parent: adopting an SOP adopts its
+        // forms, so listing them separately would invite someone to adopt a form on its own.
+        var alreadyAdopted = db.DocumentAdoptions
+            .Where(a => a.SiteId == siteId && a.IsActive)
+            .Select(a => a.DocumentId);
+
+        return await db.ControlledDocuments
+            .Where(d => d.Scope == DocumentScope.Global
+                        && d.Status == DocumentStatus.Effective
+                        && d.IsCurrentRevision
+                        && d.SiteId != siteId
+                        && d.ParentDocumentId == null
+                        && !alreadyAdopted.Contains(d.Id))
+            .OrderBy(d => d.DocumentNumber)
+            .ToListAsync(cancellationToken);
+    }
+
+    public Task<bool> HasActiveAdoptionAsync(
+        Guid documentId,
+        Guid siteId,
+        CancellationToken cancellationToken) =>
+        db.DocumentAdoptions.AnyAsync(
+            x => x.DocumentId == documentId && x.SiteId == siteId && x.IsActive,
+            cancellationToken);
+
+    public void Add(DocumentAdoption adoption) => db.DocumentAdoptions.Add(adoption);
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}
+
+public sealed class ReviewCommentRepository(DmsDbContext db) : IReviewCommentRepository
+{
+    public Task<ReviewComment?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+        db.ReviewComments.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<ReviewComment>> ListForDocumentAsync(
+        Guid documentId,
+        CancellationToken cancellationToken) =>
+        await db.ReviewComments
+            .Where(x => x.DocumentId == documentId)
+            .OrderBy(x => x.SectionReference)
+            .ThenBy(x => x.RaisedAt)
+            .ToListAsync(cancellationToken);
+
+    public Task<int> CountOpenBlockingAsync(Guid documentId, CancellationToken cancellationToken) =>
+        db.ReviewComments.CountAsync(
+            x => x.DocumentId == documentId
+                 && x.Status == CommentStatus.Open
+                 && x.Severity == CommentSeverity.Blocking,
+            cancellationToken);
+
+    public void Add(ReviewComment comment) => db.ReviewComments.Add(comment);
+
+    public Task<PersistOutcome> SaveChangesAsync(CancellationToken cancellationToken) =>
+        SaveChangesTranslator.SaveAsync(db, cancellationToken);
+}

@@ -22,6 +22,7 @@ namespace Dms.Application.Signing;
 /// </summary>
 public sealed class ReviewWorkflowService(
     IControlledDocumentRepository documents,
+    IReviewCommentRepository reviewComments,
     ISignatureRepository signatures,
     IUserRepository users,
     IDocumentFileStore documentFiles,
@@ -150,7 +151,18 @@ public sealed class ReviewWorkflowService(
                 document.Id, slot.StepOrder, user.Id, user.UserName, slot.Role, slot.StepLabel));
         }
 
-        document.SubmitForReview();
+        // Blocking comments stop resubmission. Counted here and passed in, so the rule stays
+        // in the entity where it is testable without a database.
+        var openBlocking = await reviewComments.CountOpenBlockingAsync(document.Id, cancellationToken);
+
+        try
+        {
+            document.SubmitForReview(openBlocking);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Error.Conflict("blocking_comments_open", ex.Message);
+        }
 
         audit.Record(
             AuditAction.DocumentSubmittedForReview, EntityType, document.Id, document.DocumentNumber,
