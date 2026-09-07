@@ -197,3 +197,38 @@ public class DocumentAdoptionConfiguration : IEntityTypeConfiguration<DocumentAd
             .HasDatabaseName("ix_document_adoptions_site");
     }
 }
+
+
+/// <summary>
+/// Review comments. Not append-only, unlike signatures — a comment is meant to be answered,
+/// and its status changes as the loop runs. The audit trail carries what happened to it.
+/// </summary>
+public class ReviewCommentConfiguration : IEntityTypeConfiguration<ReviewComment>
+{
+    public void Configure(EntityTypeBuilder<ReviewComment> builder)
+    {
+        builder.ToTable("review_comments");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).ValueGeneratedNever();
+
+        builder.Property(x => x.Severity).HasConversion<string>().HasMaxLength(16).IsRequired();
+        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(16).IsRequired();
+
+        builder.Property(x => x.SectionReference).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.QuotedText).HasMaxLength(2048);
+        builder.Property(x => x.Body).HasMaxLength(4000).IsRequired();
+        builder.Property(x => x.Response).HasMaxLength(4000);
+        builder.Property(x => x.RaisedBy).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.RespondedBy).HasMaxLength(128);
+
+        builder.HasOne<ControlledDocument>()
+            .WithMany()
+            .HasForeignKey(x => x.DocumentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // The query the submission guard runs on every submit: how many blocking comments are
+        // still open on this document.
+        builder.HasIndex(x => new { x.DocumentId, x.Status, x.Severity })
+            .HasDatabaseName("ix_review_comments_document_open");
+    }
+}

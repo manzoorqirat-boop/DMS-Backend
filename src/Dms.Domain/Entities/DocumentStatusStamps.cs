@@ -106,6 +106,7 @@ public class DocumentStatusStamps : Entity
         new HashSet<DocumentStatus>
         {
             DocumentStatus.Draft,
+            DocumentStatus.InDraftReview,
             DocumentStatus.InReview,
             DocumentStatus.Superseded,
             DocumentStatus.Obsolete,
@@ -173,6 +174,9 @@ public class DocumentStatusStamps : Entity
     [
         new(DocumentStatus.Draft,
             "DRAFT — UNAPPROVED — NOT FOR USE", "7C6FE0", true),
+
+        new(DocumentStatus.InDraftReview,
+            "DRAFT UNDER REVIEW — UNAPPROVED — NOT FOR USE", "7C6FE0", true),
 
         new(DocumentStatus.InReview,
             "IN REVIEW — UNAPPROVED DRAFT — NOT FOR USE", "F0A83C", true),

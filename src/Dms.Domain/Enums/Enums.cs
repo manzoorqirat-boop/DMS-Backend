@@ -47,6 +47,39 @@ public enum TemplateStatus
 /// control and distribution, all of which assume a document has a site.
 /// </para>
 /// </summary>
+/// <summary>
+/// Whether a review comment stands in the way of the document moving on.
+/// </summary>
+public enum CommentSeverity
+{
+    /// <summary>
+    /// Must be answered before the document can be resubmitted. Use for anything that would
+    /// make the procedure wrong, unsafe or non-compliant as written.
+    /// </summary>
+    Blocking,
+
+    /// <summary>
+    /// Worth recording but not worth stopping for — wording, consistency, a suggestion. Leaving
+    /// one open is a considered decision, and forcing a response to every stylistic note turns
+    /// the whole mechanism into something people click through.
+    /// </summary>
+    Advisory,
+}
+
+public enum CommentStatus
+{
+    Open,
+
+    /// <summary>The author acted on it and said what they did.</summary>
+    Resolved,
+
+    /// <summary>The author disagreed and said why. Answered, not actioned.</summary>
+    Declined,
+
+    /// <summary>The reviewer took it back.</summary>
+    Withdrawn,
+}
+
 public enum DocumentScope
 {
     /// <summary>Applies only at its own site. The default, and most documents.</summary>
@@ -63,6 +96,23 @@ public enum DocumentStatus
 {
     /// <summary>Created from a template, being authored. The only editable state.</summary>
     Draft,
+
+    /// <summary>
+    /// Circulated to reviewers who may edit it directly and leave comments.
+    /// <para>
+    /// Distinct from <see cref="InReview"/>, and the distinction is the whole point: this is
+    /// collaborative review while the content is still malleable, so the document stays
+    /// editable and no signature is involved. <see cref="InReview"/> is the formal signature
+    /// route, where the content is frozen because signatures must bind to what was actually
+    /// reviewed.
+    /// </para>
+    /// <para>
+    /// Conflating the two is a common and expensive mistake: either subject-matter review gets
+    /// forced through a signature route that freezes the text nobody has finished writing, or
+    /// approval happens on content that can still change underneath it.
+    /// </para>
+    /// </summary>
+    InDraftReview,
 
     /// <summary>Handed to ERES as an envelope; awaiting reviewer sign-off.</summary>
     InReview,

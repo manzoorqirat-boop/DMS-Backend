@@ -51,6 +51,7 @@ public static class ConcurrencyConventions
             typeof(SignaturePolicy),
             typeof(PendingAction),
             typeof(DocumentAdoption),
+            typeof(ReviewComment),
 
             // Master data.
             typeof(DocumentType),

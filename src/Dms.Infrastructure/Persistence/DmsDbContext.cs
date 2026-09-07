@@ -26,6 +26,7 @@ public class DmsDbContext(DbContextOptions<DmsDbContext> options) : DbContext(op
     public DbSet<PendingAction> PendingActions => Set<PendingAction>();
     public DbSet<ActionSignature> ActionSignatures => Set<ActionSignature>();
     public DbSet<DocumentAdoption> DocumentAdoptions => Set<DocumentAdoption>();
+    public DbSet<ReviewComment> ReviewComments => Set<ReviewComment>();
     public DbSet<SignatureRequest> SignatureRequests => Set<SignatureRequest>();
     public DbSet<ElectronicSignature> ElectronicSignatures => Set<ElectronicSignature>();
     public DbSet<Role> Roles => Set<Role>();

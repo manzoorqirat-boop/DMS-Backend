@@ -253,7 +253,17 @@ public class ControlledDocument : Entity, ITimestamped
     public DateTimeOffset? UpdatedAt { get; private set; }
 
     /// <summary>Only a Draft is editable by its author; everything later is read-only to them.</summary>
-    public bool IsEditable => Status == DocumentStatus.Draft;
+    /// <summary>
+    /// Whether the content can still change.
+    /// <para>
+    /// True during draft review as well as Draft — that is the point of having two workflows.
+    /// A reviewer in the draft phase is expected to fix what they find rather than write a note
+    /// asking someone else to. It goes false at <see cref="DocumentStatus.InReview"/>, where
+    /// signatures start binding to a fixed text.
+    /// </para>
+    /// </summary>
+    public bool IsEditable =>
+        Status is DocumentStatus.Draft or DocumentStatus.InDraftReview;
 
     /// <summary>
     /// Renaming a draft is allowed — a title is still being settled at that stage, and the
@@ -297,7 +307,16 @@ public class ControlledDocument : Entity, ITimestamped
     /// — <see cref="IsEditable"/> goes false — which is what makes the content hash recorded
     /// against each signature meaningful.
     /// </summary>
-    public void SubmitForReview()
+    /// <param name="openBlockingComments">
+    /// How many blocking review comments are still unanswered. The caller counts them; the rule
+    /// about what to do lives here, so it is testable without a database.
+    /// </param>
+    /// <remarks>
+    /// Only accepts Draft, deliberately — a document in draft review must have that round
+    /// closed first. The two-step is the point: ending collaborative review is a decision the
+    /// author makes, not something that happens as a side effect of submitting.
+    /// </remarks>
+    public void SubmitForReview(int openBlockingComments = 0)
     {
         RefuseIfAnnexure(nameof(SubmitForReview));
 
@@ -305,6 +324,17 @@ public class ControlledDocument : Entity, ITimestamped
         {
             throw new InvalidOperationException(
                 $"Cannot submit {DocumentNumber}: status is {Status}, not {DocumentStatus.Draft}.");
+        }
+
+        // Blocking comments stop resubmission; advisory ones do not. A reviewer who said the
+        // procedure is wrong should not have to say it twice, and sending the document round
+        // the signature route again with that unanswered wastes every signatory's time.
+        if (openBlockingComments > 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot submit {DocumentNumber}: {openBlockingComments} blocking review "
+                + "comment(s) are still unanswered. Resolve or decline each one — declining with "
+                + "a reason is a legitimate answer.");
         }
 
         SubmittedAt = DateTimeOffset.UtcNow;
@@ -571,6 +601,44 @@ public class ControlledDocument : Entity, ITimestamped
     }
 
     private void Touch() => UpdatedAt = DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// Circulates the document for collaborative review, where reviewers may edit it directly.
+    /// <para>
+    /// No signature and no content freeze — this is subject-matter review while the text is
+    /// still being written. The formal route is <see cref="SubmitForReview"/>.
+    /// </para>
+    /// </summary>
+    public void StartDraftReview()
+    {
+        RefuseIfAnnexure(nameof(StartDraftReview));
+
+        if (Status != DocumentStatus.Draft)
+        {
+            throw new InvalidOperationException(
+                $"Cannot start draft review on {DocumentNumber}: status is {Status}, not Draft.");
+        }
+
+        Status = DocumentStatus.InDraftReview;
+        Touch();
+    }
+
+    /// <summary>
+    /// Ends the draft review round and returns the document to Draft for the author to finish.
+    /// </summary>
+    public void CloseDraftReview()
+    {
+        RefuseIfAnnexure(nameof(CloseDraftReview));
+
+        if (Status != DocumentStatus.InDraftReview)
+        {
+            throw new InvalidOperationException(
+                $"{DocumentNumber} is not in draft review; its status is {Status}.");
+        }
+
+        Status = DocumentStatus.Draft;
+        Touch();
+    }
 
     /// <summary>
     /// Marks the document as issued centrally for other sites to adopt.
