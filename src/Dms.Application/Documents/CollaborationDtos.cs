@@ -91,3 +91,13 @@ public sealed record ReviewCommentView(
         comment.RespondedBy,
         comment.RespondedAt);
 }
+
+
+/// <summary>
+/// Body of POST /api/documents/{id}/scope.
+/// <para>
+/// Sent as a request body rather than a route segment because it is a change to the document,
+/// not a different resource — and because the set of scopes may grow.
+/// </para>
+/// </summary>
+public sealed record SetScopeRequest(DocumentScope Scope);

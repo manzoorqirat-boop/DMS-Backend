@@ -386,6 +386,74 @@ public sealed class DraftCreationService(
         return found.Map(DocumentSummary.From);
     }
 
+    /// <summary>
+    /// Marks a document as issued centrally for other sites to adopt, or back to local.
+    /// <para>
+    /// Draft only, enforced by the entity. Gated on <see cref="Permission.DocumentSubmit"/>
+    /// rather than plain edit rights: making a document global extends its reach to every other
+    /// site in the organisation, which is a wider decision than authoring one.
+    /// </para>
+    /// </summary>
+    public async Task<Result<DocumentSummary>> SetScopeAsync(
+        Guid id,
+        SetScopeRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserName is not { } actor || string.IsNullOrWhiteSpace(actor))
+        {
+            return Error.Validation("actor_unknown", "The acting user could not be determined.");
+        }
+
+        var document = await documents.GetAsync(id, cancellationToken);
+        if (document is null)
+        {
+            return Error.NotFound("document_not_found", $"No document with id {id}.");
+        }
+
+        var permitted = await access.HasPermissionAsync(
+            Permission.DocumentSubmit, document.SiteId, document.DepartmentId, cancellationToken);
+
+        if (!permitted)
+        {
+            return Error.Validation(
+                "permission_denied",
+                $"{Permission.DocumentSubmit} is required to change a document's scope — going "
+                + "global extends it to every other site.");
+        }
+
+        if (document.Scope == request.Scope)
+        {
+            // Idempotent rather than an error: a double-click should not produce a failure, and
+            // there is nothing to record when nothing changed.
+            return DocumentSummary.From(document);
+        }
+
+        var previous = document.Scope;
+
+        try
+        {
+            document.SetScope(request.Scope);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Error.Conflict("scope_change_refused", ex.Message);
+        }
+
+        audit.Record(
+            AuditAction.DocumentRetitled, EntityType, document.Id,
+            $"{document.DocumentNumber} Rev {document.Revision:00}",
+            $"Scope changed from {previous} to {request.Scope}."
+            + (request.Scope == DocumentScope.Global
+                ? " Other sites may now adopt it once it is effective."
+                : " Other sites can no longer adopt it."));
+
+        var outcome = await documents.SaveChangesAsync(cancellationToken);
+
+        return outcome.Saved
+            ? DocumentSummary.From(document)
+            : Error.Conflict("document_save_conflict", "The scope could not be changed.");
+    }
+
     public async Task<Result<DocumentSummary>> WithdrawAsync(Guid id, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(currentUser.UserName))

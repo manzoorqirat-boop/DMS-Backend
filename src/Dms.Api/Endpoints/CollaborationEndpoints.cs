@@ -15,6 +15,15 @@ public static class CollaborationEndpoints
     {
         var documents = app.MapGroup("/api/documents").WithTags("Collaboration");
 
+        // Scope lives here rather than with the other document writes because it exists only
+        // to serve adoption — a local document never needs it set.
+        documents.MapPost("/{id:guid}/scope", async (
+            DraftCreationService service,
+            Guid id,
+            SetScopeRequest request,
+            CancellationToken ct) =>
+            (await service.SetScopeAsync(id, request, ct)).ToHttpResult());
+
         documents.MapPost("/{id:guid}/adoptions", async (
             AdoptionService service,
             Guid id,
