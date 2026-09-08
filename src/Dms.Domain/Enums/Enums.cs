@@ -272,7 +272,21 @@ public enum AuditAction
 public enum SignatureRole
 {
     Reviewer,
+
     Approver,
+
+    /// <summary>
+    /// Quality-organisation approval — the independent quality sign-off that follows technical
+    /// approval.
+    /// <para>
+    /// A distinct role rather than another <see cref="Approver"/> step, because the whole point
+    /// of QO approval is that it is <i>not</i> the same kind of judgement: a technical approver
+    /// confirms the procedure is correct, a quality approver confirms it is compliant and that
+    /// the process producing it was followed. Collapsing them into one role would make
+    /// "minimum one QO approver" unenforceable — nothing could tell the two apart.
+    /// </para>
+    /// </summary>
+    QualityApprover,
 }
 
 /// <summary>
