@@ -102,6 +102,38 @@ public sealed class ReviewWorkflowService(
                 $"Step(s) {string.Join(", ", extra)} are not part of the configured route '{template.WorkflowName}'.");
         }
 
+        // Composition. Eligibility is checked per step below — this asks the different question
+        // of whether the route as a whole constitutes independent review. A route can be
+        // perfectly eligible at every step and still be worthless: the author approving their
+        // own document, or one person holding every step.
+        var nominatedSteps = template.Slots
+            .Select(slot => new RouteCompositionValidator.NominatedStep(
+                slot.StepOrder, slot.StepLabel, slot.Role, nominated[slot.StepOrder]))
+            .ToList();
+
+        var composition = RouteCompositionValidator.Validate(nominatedSteps, document.Author);
+
+        if (composition.Count > 0)
+        {
+            // Every problem at once, rather than the first — a submitter should fix one form,
+            // not discover three refusals in sequence.
+            return Error.Validation("route_composition_invalid", string.Join(" ", composition));
+        }
+
+        // A route whose configuration defines a quality-approval step but which somehow arrived
+        // without one. Slots come from configuration rather than the submitter, so this should
+        // be unreachable — it catches a misconfigured workflow, which is precisely the case
+        // that would otherwise pass silently.
+        var requiresQualityApproval = template.Slots.Any(s => s.Role == SignatureRole.QualityApprover);
+
+        if (!RouteCompositionValidator.SatisfiesQualityApproval(nominatedSteps, requiresQualityApproval))
+        {
+            return Error.Validation(
+                "route_missing_quality_approver",
+                $"The route '{template.WorkflowName}' requires a quality approval step but none "
+                + "was nominated. The workflow configuration may be inconsistent.");
+        }
+
         // Resolved before anything is written: a route referencing a deactivated account would
         // stall the document at that step with no way forward but an admin intervention.
         var resolved = new List<(RouteSlot Slot, DmsUser User)>();
