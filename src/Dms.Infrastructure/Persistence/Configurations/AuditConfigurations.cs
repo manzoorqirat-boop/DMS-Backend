@@ -17,6 +17,10 @@ public class AuditEventConfiguration : IEntityTypeConfiguration<AuditEvent>
         builder.Property(x => x.Actor).HasMaxLength(128).IsRequired();
         builder.Property(x => x.Details).HasMaxLength(2000);
 
+        // 45 chars covers an IPv6 address with an embedded IPv4 suffix, the longest form the
+        // platform can hand us.
+        builder.Property(x => x.IpAddress).HasMaxLength(45);
+
         // No foreign key to the subject, on purpose. An audit event must outlive whatever it
         // describes and must never be the reason a delete is blocked or, worse, be cascaded
         // away with it. EntityLabel is what keeps the record readable without the join.
