@@ -43,4 +43,20 @@ public sealed class HttpContextCurrentUser(
             return string.IsNullOrWhiteSpace(impersonated) ? null : impersonated;
         }
     }
+
+    /// <summary>
+    /// The client address, as the platform reports it after forwarded-header processing.
+    /// <para>
+    /// Behind Railway's proxy, <c>RemoteIpAddress</c> is the proxy unless
+    /// <c>UseForwardedHeaders</c> has rewritten it from <c>X-Forwarded-For</c> — see Program.cs.
+    /// Without that middleware every signature in the system would record the same useless
+    /// address, which is arguably worse than recording none: it looks like data.
+    /// </para>
+    /// <para>
+    /// Returns null rather than a placeholder when there is no request at all, so a scheduled
+    /// job's audit entries are honestly blank instead of pretending to have a client.
+    /// </para>
+    /// </summary>
+    public string? IpAddress =>
+        accessor.HttpContext?.Connection.RemoteIpAddress?.ToString();
 }
