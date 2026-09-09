@@ -38,7 +38,8 @@ public class ElectronicSignature : Entity
         string designation,
         SignatureMeaning meaning,
         string contentHash,
-        string? reason)
+        string? reason,
+        string? ipAddress = null)
     {
         DocumentId = documentId;
         SignatureRequestId = signatureRequestId;
@@ -56,6 +57,7 @@ public class ElectronicSignature : Entity
                 : reason.Trim())
             : (string.IsNullOrWhiteSpace(reason) ? null : reason.Trim());
 
+        IpAddress = string.IsNullOrWhiteSpace(ipAddress) ? null : ipAddress.Trim();
         SignedAt = DateTimeOffset.UtcNow;
     }
 
@@ -84,6 +86,9 @@ public class ElectronicSignature : Entity
 
     /// <summary>Required when <see cref="Meaning"/> is Rejected; optional otherwise.</summary>
     public string? Reason { get; private set; }
+
+    /// <summary>Where the signature was applied from. Null for a signature with no request.</summary>
+    public string? IpAddress { get; private set; }
 
     public DateTimeOffset SignedAt { get; private set; }
 
