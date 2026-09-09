@@ -37,6 +37,7 @@ public static class AuditEndpoints
                 e.EntityId,
                 e.EntityLabel,
                 e.Details,
+                e.IpAddress,
             }));
         });
     }
