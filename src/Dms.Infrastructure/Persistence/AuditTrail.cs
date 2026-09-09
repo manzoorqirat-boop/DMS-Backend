@@ -31,7 +31,11 @@ public sealed class AuditTrail(DmsDbContext db, ICurrentUser currentUser) : IAud
                 $"Cannot record {action} for {entityType} {entityId}: no attributable actor.");
         }
 
-        db.AuditEvents.Add(new AuditEvent(action, entityType, entityId, entityLabel, resolvedActor, details));
+        db.AuditEvents.Add(new AuditEvent(
+            action, entityType, entityId, entityLabel, resolvedActor, details,
+            // Read here rather than passed in by every caller. Threading it through several
+            // hundred audit.Record calls would guarantee some of them forgot.
+            currentUser.IpAddress));
     }
 
     public async Task<PagedResult<AuditEvent>> ListAsync(
