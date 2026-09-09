@@ -98,6 +98,7 @@ public class ElectronicSignatureConfiguration : IEntityTypeConfiguration<Electro
         builder.Property(x => x.ContentHash).HasMaxLength(64).IsFixedLength().IsRequired();
 
         builder.Property(x => x.Reason).HasMaxLength(2000);
+        builder.Property(x => x.IpAddress).HasMaxLength(45);
 
         builder.HasOne<ControlledDocument>()
             .WithMany()
@@ -246,6 +247,7 @@ public class ActionSignatureConfiguration : IEntityTypeConfiguration<ActionSigna
         builder.Property(x => x.Department).HasMaxLength(128).IsRequired();
         builder.Property(x => x.Designation).HasMaxLength(128).IsRequired();
         builder.Property(x => x.Reason).HasMaxLength(1024);
+        builder.Property(x => x.IpAddress).HasMaxLength(45);
 
         builder.Ignore(x => x.UpdatedAt);
     }
