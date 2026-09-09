@@ -337,7 +337,8 @@ public sealed class ReviewWorkflowService(
                     user.Designation,
                     request.Meaning,
                     contentHash,
-                    request.Reason);
+                    request.Reason,
+                    currentUser.IpAddress);
 
                 signatures.AddSignature(signature);
                 user.RegisterSuccessfulSigning();
