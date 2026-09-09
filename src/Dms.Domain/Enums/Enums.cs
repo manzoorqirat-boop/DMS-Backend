@@ -123,6 +123,17 @@ public enum DocumentStatus
     /// <summary>In force from its effective date. The version a controlled copy prints from.</summary>
     Effective,
 
+    /// <summary>
+    /// In force but temporarily stopped — do not work to it pending investigation.
+    /// <para>
+    /// Distinct from Obsolete, and the distinction matters: obsolete is terminal and a document
+    /// never returns from it, while suspension is a pause that ends either in reinstatement or
+    /// in withdrawal. Treating a suspected problem as permanent withdrawal would force a
+    /// revision cycle to undo something that turned out to be a false alarm.
+    /// </para>
+    /// </summary>
+    Suspended,
+
     /// <summary>Replaced by a later revision that is now Effective.</summary>
     Superseded,
 
