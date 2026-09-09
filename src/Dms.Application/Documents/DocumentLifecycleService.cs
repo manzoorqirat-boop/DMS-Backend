@@ -166,6 +166,103 @@ public sealed class DocumentLifecycleService(
     /// outright) or Superseded (an old revision being retired from the register).
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Stops a document being worked to, pending investigation.
+    /// <para>
+    /// Gated on <see cref="Permission.DocumentObsolete"/> — the same right as withdrawal,
+    /// because stopping a procedure the floor is following has the same operational
+    /// consequence as retiring it, even though it is reversible.
+    /// </para>
+    /// </summary>
+    public async Task<Result<DocumentSummary>> SuspendAsync(
+        Guid documentId,
+        string reason,
+        CancellationToken cancellationToken) =>
+        await SuspensionAsync(documentId, reason, suspend: true, cancellationToken);
+
+    /// <summary>Returns a suspended document to force, the investigation having cleared it.</summary>
+    public async Task<Result<DocumentSummary>> ReinstateAsync(
+        Guid documentId,
+        string reason,
+        CancellationToken cancellationToken) =>
+        await SuspensionAsync(documentId, reason, suspend: false, cancellationToken);
+
+    private async Task<Result<DocumentSummary>> SuspensionAsync(
+        Guid documentId,
+        string reason,
+        bool suspend,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.UserName is not { } actor || string.IsNullOrWhiteSpace(actor))
+        {
+            return Error.Validation("actor_unknown", "The acting user could not be determined.");
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            // Required in both directions. Reinstating without saying what the investigation
+            // found leaves a gap exactly where the record needs to explain itself.
+            return Error.Validation(
+                "reason_required",
+                suspend
+                    ? "A suspension must state why the document is being stopped."
+                    : "Reinstatement must state what the investigation concluded.");
+        }
+
+        var document = await documents.GetAsync(documentId, cancellationToken);
+        if (document is null)
+        {
+            return Error.NotFound("document_not_found", $"No document with id {documentId}.");
+        }
+
+        var permitted = await access.HasPermissionAsync(
+            Permission.DocumentObsolete, document.SiteId, document.DepartmentId, cancellationToken);
+
+        if (!permitted)
+        {
+            return Error.Validation(
+                "permission_denied",
+                $"{Permission.DocumentObsolete} is required to suspend or reinstate a document.");
+        }
+
+        try
+        {
+            if (suspend)
+            {
+                document.Suspend(reason);
+            }
+            else
+            {
+                document.Reinstate();
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Error.Conflict("suspension_refused", ex.Message);
+        }
+
+        // Annexures follow: a form whose procedure is stopped must not read as current, and
+        // because every direct transition on an annexure is refused, nobody could stop it by
+        // hand either.
+        foreach (var annexure in await documents.ListAnnexuresAsync(document.Id, cancellationToken))
+        {
+            annexure.FollowParent(document);
+        }
+
+        audit.Record(
+            suspend ? AuditAction.DocumentObsoleted : AuditAction.DocumentMadeEffective,
+            EntityType, document.Id, $"{document.DocumentNumber} Rev {document.Revision:00}",
+            suspend
+                ? $"Suspended — do not use pending investigation. Reason: {reason}"
+                : $"Reinstated to effective use. {reason}");
+
+        var outcome = await documents.SaveChangesAsync(cancellationToken);
+
+        return outcome.Saved
+            ? DocumentSummary.From(document)
+            : Error.Conflict("document_save_conflict", "The document could not be updated.");
+    }
+
     public async Task<Result<DocumentSummary>> MakeObsoleteAsync(
         Guid documentId,
         string reason,
