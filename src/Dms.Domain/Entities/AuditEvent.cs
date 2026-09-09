@@ -26,7 +26,8 @@ public class AuditEvent : Entity
         Guid entityId,
         string entityLabel,
         string actor,
-        string? details = null)
+        string? details = null,
+        string? ipAddress = null)
     {
         Action = action;
         EntityType = RequireNonEmpty(entityType, nameof(entityType));
@@ -34,10 +35,23 @@ public class AuditEvent : Entity
         EntityLabel = RequireNonEmpty(entityLabel, nameof(entityLabel));
         Actor = RequireNonEmpty(actor, nameof(actor));
         Details = details;
+
+        // Trimmed to null rather than stored blank: an empty string reads as "we recorded an
+        // address and it was nothing", where null reads as "there was no request", which is
+        // the truth for a scheduled job.
+        IpAddress = string.IsNullOrWhiteSpace(ipAddress) ? null : ipAddress.Trim();
+
         OccurredAt = DateTimeOffset.UtcNow;
     }
 
     public AuditAction Action { get; private set; }
+
+    /// <summary>
+    /// Where the request came from, or null when there was no request — a scheduled sweep has
+    /// no client. Corroborating detail on an already-attributed action, never the attribution
+    /// itself.
+    /// </summary>
+    public string? IpAddress { get; private set; }
 
     /// <summary>Aggregate the event is about — "ControlledDocument", "DocumentTemplate", etc.</summary>
     public string EntityType { get; private set; } = "";
