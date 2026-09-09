@@ -232,7 +232,8 @@ public class ActionSignature : Entity, ITimestamped
         string department,
         string designation,
         ActionSignatureMeaning meaning,
-        string? reason)
+        string? reason,
+        string? ipAddress = null)
     {
         PendingActionId = pendingActionId;
         UserId = userId;
@@ -248,6 +249,8 @@ public class ActionSignature : Entity, ITimestamped
                 : reason.Trim())
             : (string.IsNullOrWhiteSpace(reason) ? null : reason.Trim());
 
+        IpAddress = string.IsNullOrWhiteSpace(ipAddress) ? null : ipAddress.Trim();
+
         SignedAt = DateTimeOffset.UtcNow;
         CreatedAt = SignedAt;
     }
@@ -260,6 +263,9 @@ public class ActionSignature : Entity, ITimestamped
     public string Designation { get; private set; } = "";
     public ActionSignatureMeaning Meaning { get; private set; }
     public string? Reason { get; private set; }
+    /// <summary>Where the signature was applied from. Null for a signature with no request.</summary>
+    public string? IpAddress { get; private set; }
+
     public DateTimeOffset SignedAt { get; private set; }
 
     public DateTimeOffset CreatedAt { get; private set; }
