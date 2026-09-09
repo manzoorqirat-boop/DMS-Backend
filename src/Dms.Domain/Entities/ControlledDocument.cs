@@ -228,6 +228,9 @@ public class ControlledDocument : Entity, ITimestamped
     /// <summary>Why the document was withdrawn from use. Required when obsoleting.</summary>
     public string? ObsoleteReason { get; private set; }
 
+    /// <summary>Why the document is currently stopped. Cleared on reinstatement.</summary>
+    public string? SuspensionReason { get; private set; }
+
     /// <summary>
     /// Date this record becomes eligible for disposition. Set when the document leaves active
     /// use — superseded or obsoleted — from the type's retention policy. Null while in use, or
@@ -424,11 +427,14 @@ public class ControlledDocument : Entity, ITimestamped
     /// </summary>
     public void RecordPeriodicReview(DateOnly nextReviewDate, string reviewedBy)
     {
-        if (Status != DocumentStatus.Effective)
+        // Suspended included, deliberately. A document that is stopped still comes up for
+        // review, and a suspended document nobody ever revisits is worse than one in force —
+        // it sits in limbo with no scheduled moment where someone has to decide its fate.
+        if (Status is not (DocumentStatus.Effective or DocumentStatus.Suspended))
         {
             throw new InvalidOperationException(
                 $"Cannot record a periodic review for {DocumentNumber}: status is {Status}, "
-                + $"not {DocumentStatus.Effective}.");
+                + $"not {DocumentStatus.Effective} or {DocumentStatus.Suspended}.");
         }
 
         NextReviewDate = nextReviewDate;
@@ -460,11 +466,71 @@ public class ControlledDocument : Entity, ITimestamped
     /// Withdrawn from use with no replacement. Retained, not deleted — the retention clock
     /// starts here rather than the record disappearing.
     /// </summary>
+    /// <summary>
+    /// Stops the document being worked to, pending investigation, without withdrawing it.
+    /// <para>
+    /// New controlled copies cannot be issued while suspended — distribution already refuses
+    /// anything that is not Effective, so that falls out for free and is worth stating: a
+    /// suspension that still let fresh paper onto the floor would mean nothing.
+    /// </para>
+    /// <para>
+    /// Copies already issued are deliberately <b>not</b> auto-retrieved. Recalling paper is a
+    /// physical act with its own record; marking it retrieved because a status changed would
+    /// put a lie in the distribution register. The retrieval worklist is where that gets
+    /// handled, by someone who actually collected them.
+    /// </para>
+    /// </summary>
+    public void Suspend(string reason)
+    {
+        RefuseIfAnnexure(nameof(Suspend));
+
+        if (Status != DocumentStatus.Effective)
+        {
+            throw new InvalidOperationException(
+                $"Cannot suspend {DocumentNumber}: status is {Status}, not "
+                + $"{DocumentStatus.Effective}. Only a document actually in force can be stopped.");
+        }
+
+        SuspensionReason = RequireNonEmpty(reason, nameof(reason));
+        Status = DocumentStatus.Suspended;
+        Touch();
+    }
+
+    /// <summary>
+    /// Returns a suspended document to force, the investigation having cleared it.
+    /// <para>
+    /// The effective date is untouched: the document was in force before the suspension and is
+    /// in force after it, and rewriting the date would erase the fact that it ever stopped. The
+    /// audit trail carries the gap.
+    /// </para>
+    /// </summary>
+    public void Reinstate()
+    {
+        RefuseIfAnnexure(nameof(Reinstate));
+
+        if (Status != DocumentStatus.Suspended)
+        {
+            throw new InvalidOperationException(
+                $"Cannot reinstate {DocumentNumber}: status is {Status}, not "
+                + $"{DocumentStatus.Suspended}.");
+        }
+
+        // Cleared, because it no longer describes the document — but the audit trail still has
+        // it, so nothing is lost by not carrying a stale reason forward on the record itself.
+        SuspensionReason = null;
+        Status = DocumentStatus.Effective;
+        Touch();
+    }
+
     public void MakeObsolete(string reason)
     {
         RefuseIfAnnexure(nameof(MakeObsolete));
 
-        if (Status is not (DocumentStatus.Effective or DocumentStatus.Superseded))
+        // Suspended included: withdrawal is one of the two ways a suspension ends, and forcing
+        // a reinstatement first would mean briefly putting a document known to be wrong back
+        // into force in order to retire it.
+        if (Status is not (DocumentStatus.Effective or DocumentStatus.Suspended
+            or DocumentStatus.Superseded))
         {
             throw new InvalidOperationException(
                 $"Cannot obsolete {DocumentNumber}: status is {Status}.");
@@ -499,10 +565,14 @@ public class ControlledDocument : Entity, ITimestamped
     {
         RefuseIfAnnexure(nameof(BeginRevision));
 
-        if (Status != DocumentStatus.Effective)
+        // Suspended included: revising is the main way a suspension is resolved — you stop the
+        // document, find out what is wrong, and fix it. Requiring reinstatement first would
+        // mean putting a document known to be wrong back into force in order to correct it.
+        if (Status is not (DocumentStatus.Effective or DocumentStatus.Suspended))
         {
             throw new InvalidOperationException(
-                $"Cannot revise {DocumentNumber}: status is {Status}, not {DocumentStatus.Effective}. "
+                $"Cannot revise {DocumentNumber}: status is {Status}, not {DocumentStatus.Effective} "
+                + $"or {DocumentStatus.Suspended}. "
                 + "Only the version currently in force can be revised.");
         }
 
