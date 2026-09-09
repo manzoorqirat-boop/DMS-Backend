@@ -29,7 +29,9 @@ public sealed record SignatureView(
     string StepLabel,
     int StepOrder,
     string ContentHash,
-    string? Reason)
+    string? Reason,
+    /// <summary>Where the signature was applied from. Null for one applied without a request.</summary>
+    string? IpAddress)
 {
     public static SignatureView From(ElectronicSignature signature, SignatureRequest step) => new(
         signature.UserName,
@@ -41,7 +43,8 @@ public sealed record SignatureView(
         step.StepLabel,
         step.StepOrder,
         signature.ContentHash,
-        signature.Reason);
+        signature.Reason,
+        signature.IpAddress);
 }
 
 public sealed record RouteStepView(
