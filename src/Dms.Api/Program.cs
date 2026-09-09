@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.HttpOverrides;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -116,6 +117,21 @@ var app = builder.Build();
 
 // First in the pipeline: an exception thrown by anything downstream, including
 // authentication, has to reach this rather than surfacing as an empty 500.
+// Must run before anything that reads the client address. Railway terminates TLS at its edge
+// and forwards on, so Connection.RemoteIpAddress is the proxy until this rewrites it from
+// X-Forwarded-For. Without it every electronic signature would record the same address.
+//
+// KnownNetworks/KnownProxies are cleared deliberately: the defaults only trust loopback, which
+// a container behind a platform proxy never sees. The tradeoff is that a client could spoof
+// X-Forwarded-For — acceptable here because this address is corroborating detail on an
+// already-authenticated action, never something a decision is made on.
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+    KnownNetworks = { },
+    KnownProxies = { },
+});
+
 app.UseExceptionHandler();
 
 app.UseStatusCodePages();
