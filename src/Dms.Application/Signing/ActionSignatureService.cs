@@ -162,7 +162,7 @@ public sealed class ActionSignatureService(
 
         pending.AddSignature(new ActionSignature(
             pending.Id, user.Id, user.UserName, user.FullName, user.Department, user.Designation,
-            ActionSignatureMeaning.Performed, null));
+            ActionSignatureMeaning.Performed, null, currentUser.IpAddress));
 
         pendingActions.Add(pending);
 
@@ -276,7 +276,7 @@ public sealed class ActionSignatureService(
             // because it is a legitimate thing to attempt and a comprehensible thing to be told.
             pending.AddSignature(new ActionSignature(
                 pending.Id, user.Id, user.UserName, user.FullName, user.Department,
-                user.Designation, meaning, reason));
+                user.Designation, meaning, reason, currentUser.IpAddress));
 
             if (approve)
             {
