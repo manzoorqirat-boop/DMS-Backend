@@ -28,6 +28,20 @@ public static class LifecycleEndpoints
             CancellationToken ct) =>
             (await service.MakeObsoleteAsync(id, request.Reason, request.Password, ct)).ToHttpResult());
 
+        group.MapPost("/{id:guid}/suspend", async (
+            DocumentLifecycleService service,
+            Guid id,
+            SuspensionRequest request,
+            CancellationToken ct) =>
+            (await service.SuspendAsync(id, request.Reason, ct)).ToHttpResult());
+
+        group.MapPost("/{id:guid}/reinstate", async (
+            DocumentLifecycleService service,
+            Guid id,
+            SuspensionRequest request,
+            CancellationToken ct) =>
+            (await service.ReinstateAsync(id, request.Reason, ct)).ToHttpResult());
+
         var reports = app.MapGroup("/api/reports").WithTags("Reports");
 
         // The pre-intimation report. Anything already overdue is included regardless of the
@@ -117,5 +131,11 @@ public static class LifecycleEndpoints
 public sealed record PeriodicReviewRequest(string Outcome, string? Password = null);
 
 public sealed record ObsoleteRequest(string Reason, string? Password = null);
+
+/// <param name="Reason">
+/// Required in both directions — a reinstatement that does not say what the investigation
+/// found leaves a gap exactly where the record needs to explain itself.
+/// </param>
+public sealed record SuspensionRequest(string Reason);
 
 public sealed record UpdateReviewPolicyRequest(int ReviewIntervalMonths);
