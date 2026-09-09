@@ -108,6 +108,7 @@ public class DocumentStatusStamps : Entity
             DocumentStatus.Draft,
             DocumentStatus.InDraftReview,
             DocumentStatus.InReview,
+            DocumentStatus.Suspended,
             DocumentStatus.Superseded,
             DocumentStatus.Obsolete,
             DocumentStatus.Withdrawn,
@@ -188,6 +189,9 @@ public class DocumentStatusStamps : Entity
         new(DocumentStatus.Effective,
             "EFFECTIVE — {DocumentNumber} Rev {Revision} — effective {EffectiveDate}",
             "1FA971", true),
+
+        new(DocumentStatus.Suspended,
+            "SUSPENDED — DO NOT USE — STOPPED PENDING INVESTIGATION", "F0A83C", true),
 
         new(DocumentStatus.Superseded,
             "SUPERSEDED — REPLACED BY A LATER REVISION — DO NOT USE", "5B7A9D", true),
