@@ -76,4 +76,19 @@ public interface ITemplateRepository
 public interface ICurrentUser
 {
     string? UserName { get; }
+
+    /// <summary>
+    /// The network address the current request came from, or null when there is no request.
+    /// <para>
+    /// Nullable on purpose. A scheduled job has no HTTP context, so a reminder sweep genuinely
+    /// has no originating address — recording "unknown" or the server's own address there would
+    /// be worse than recording nothing, because it would look like a real client.
+    /// </para>
+    /// <para>
+    /// §11 does not require this, but every regulated system records it, and for the same
+    /// reason: attribution answers <i>who</i>, and this is the only field that helps answer
+    /// <i>from where</i> when an account is disputed.
+    /// </para>
+    /// </summary>
+    string? IpAddress { get; }
 }
